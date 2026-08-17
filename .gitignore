@@ -27,6 +27,10 @@ env/
 Thumbs.db
 desktop.ini
 
+# Local development docs (not for remote)
+docs/
+HANDOVER.md
+
 # Data files (contain distributor/product data)
 *.csv
 *.xlsx
