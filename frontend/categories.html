@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Configuration Driven Categories | Unilog</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <header class="topbar">
+        <div class="logo">Unilog Trust Engine</div>
+        <nav>
+            <a href="index.html"><button class="nav-btn">← Back to Dashboard</button></a>
+        </nav>
+    </header>
+
+    <main>
+        <h2>Configuration-Driven Architecture</h2>
+        <p>The Product Trust Engine pipeline is entirely agnostic to the product category. The core pipeline (Identity, Retrieval, Validation, Scoring, Mapping) never changes. Only the configuration definitions change.</p>
+        
+        <div class="grid">
+            <div class="card">
+                <h3>Appliances</h3>
+                <p><code>config_appliances.py</code></p>
+                <ul style="color: var(--text-muted); font-size: 0.9rem">
+                    <li>Voltage Rating</li>
+                    <li>Amperage Rating</li>
+                    <li>Sound Level</li>
+                    <li>Wash Cycles</li>
+                </ul>
+            </div>
+            <div class="card">
+                <h3>Lighting</h3>
+                <p><code>config_lighting.py</code></p>
+                <ul style="color: var(--text-muted); font-size: 0.9rem">
+                    <li>Lumens</li>
+                    <li>Color Temperature</li>
+                    <li>Wattage</li>
+                    <li>Bulb Base</li>
+                </ul>
+            </div>
+            <div class="card">
+                <h3>Fasteners</h3>
+                <p><code>config_fasteners.py</code></p>
+                <ul style="color: var(--text-muted); font-size: 0.9rem">
+                    <li>Thread Size</li>
+                    <li>Length</li>
+                    <li>Head Type</li>
+                    <li>Material Grade</li>
+                </ul>
+            </div>
+        </div>
+        
+        <div class="card" style="margin-top: 2rem; background-color: rgba(0,0,0,0.2)">
+            <h3>Pipeline Generalization</h3>
+            <pre style="color: var(--text-muted)"><code>
+from pipeline import process_batch
+from config_lighting import TAXONOMY as LIGHTING_TAXONOMY
+
+# Enriching appliances
+process_batch("appliances.csv", taxonomy=APPLIANCE_TAXONOMY)
+
+# Enriching lighting without changing any core logic
+process_batch("lighting.csv", taxonomy=LIGHTING_TAXONOMY)
+            </code></pre>
+        </div>
+    </main>
+</body>
+</html>

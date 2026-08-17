@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Unilog Trust Engine</title>
+    <link rel="stylesheet" href="styles.css">
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%231a56db'/><text x='16' y='22' text-anchor='middle' fill='white' font-size='16' font-weight='bold'>U</text></svg>">
+</head>
+<body>
+    <aside class="sidebar">
+        <div class="sidebar-brand">
+            <div class="brand-icon">U</div>
+            <div>
+                <div class="brand-text">Trust Engine</div>
+                <div class="brand-sub">Unilog</div>
+            </div>
+        </div>
+        <nav class="sidebar-nav">
+            <div class="nav-section">Overview</div>
+            <button onclick="nav('dashboard')" class="nav-item" data-view="dashboard">
+                <span class="nav-icon">&#9632;</span> Dashboard
+            </button>
+            <button onclick="nav('upload')" class="nav-item" data-view="upload">
+                <span class="nav-icon">&#8682;</span> Process CSV
+                <span class="nav-badge">Live</span>
+            </button>
+
+            <div class="nav-section">Analysis</div>
+            <button onclick="nav('diff')" class="nav-item" data-view="diff">
+                <span class="nav-icon">&#8596;</span> Ground Truth Diff
+            </button>
+            <button onclick="nav('qa')" class="nav-item" data-view="qa">
+                <span class="nav-icon">&#10003;</span> QA Metrics
+            </button>
+
+            <div class="nav-section">Explore</div>
+            <button onclick="nav('journey', 0)" class="nav-item" data-view="journey">
+                <span class="nav-icon">&#9654;</span> Pipeline Journey
+            </button>
+            <button onclick="nav('detail', 0)" class="nav-item" data-view="detail">
+                <span class="nav-icon">&#9881;</span> Product Detail
+            </button>
+        </nav>
+        <div class="sidebar-footer">
+            UniHack 2026 &middot; Product Intelligence
+        </div>
+    </aside>
+
+    <div class="main">
+        <header class="topbar">
+            <div class="topbar-title" id="topbar-title">Dashboard</div>
+            <div class="topbar-actions">
+                <button onclick="nav('upload')" class="btn btn-primary btn-sm">+ Process CSV</button>
+            </div>
+        </header>
+        <div class="content" id="app-content">
+            <!-- Views injected by JS -->
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
