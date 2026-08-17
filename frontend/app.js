@@ -155,8 +155,7 @@ function renderUpload() {
             </div>
             <p style="color:var(--gray-500);font-size:0.875rem;margin-bottom:1.5rem">
                 Upload a CSV with columns: Mfg_Part_Num, Part_Desc, E1_Brand, Unilog_Brand, DIB_Brand, Part_Manuf.
-                The pipeline will fetch real evidence from manufacturer sites and enrich each row.
-                Max 25 rows for live demo.
+                Large datasets (1000+ rows) are processed in the background with parallel workers.
             </p>
             <div id="upload-zone" class="upload-zone" onclick="document.getElementById('csv-file').click()"
                  ondragover="event.preventDefault();this.classList.add('dragover')"
@@ -164,19 +163,27 @@ function renderUpload() {
                  ondrop="event.preventDefault();this.classList.remove('dragover');handleFileDrop(event)">
                 <div class="upload-icon">&#8682;</div>
                 <div class="upload-title">Drop CSV here or click to browse</div>
-                <div class="upload-desc">Max 25 rows for live evidence retrieval</div>
+                <div class="upload-desc">Supports 1 to 10,000 rows &middot; Parallel processing with progress tracking</div>
             </div>
             <input type="file" id="csv-file" accept=".csv" style="display:none" onchange="handleFileSelect(this)">
 
-            <div id="upload-loading" style="display:none" class="loading-overlay">
-                <div class="spinner"></div>
-                <div style="font-weight:600;color:var(--gray-800)">Processing products...</div>
-                <div style="font-size:0.875rem;color:var(--gray-500)">Fetching evidence from manufacturer sites</div>
+            <div id="upload-loading" style="display:none">
+                <div class="loading-overlay">
+                    <div class="spinner"></div>
+                    <div style="font-weight:600;color:var(--gray-800)">Processing products...</div>
+                    <div id="upload-progress-text" style="font-size:0.875rem;color:var(--gray-500)">Starting...</div>
+                    <div class="progress-bar" style="width:300px;margin-top:0.5rem">
+                        <div id="upload-progress-bar" class="progress-fill blue" style="width:0%"></div>
+                    </div>
+                    <div id="upload-stats" style="font-size:0.8125rem;color:var(--gray-400);margin-top:0.5rem"></div>
+                </div>
             </div>
             <div id="upload-error" style="display:none;color:var(--danger);margin-top:1rem;font-size:0.875rem"></div>
         </div>
     `;
 }
+
+let currentJobId = null;
 
 function handleFileDrop(e) {
     const file = e.dataTransfer.files[0];
@@ -189,28 +196,68 @@ function handleFileSelect(input) {
 
 async function uploadCSV(file) {
     document.getElementById('upload-zone').style.display = 'none';
-    document.getElementById('upload-loading').style.display = 'flex';
+    document.getElementById('upload-loading').style.display = 'block';
     document.getElementById('upload-error').style.display = 'none';
 
     const formData = new FormData();
     formData.append('file', file);
 
     try {
-        const res = await fetch('/pipeline/process', { method: 'POST', body: formData });
+        // Use job queue endpoint for all sizes
+        const res = await fetch('/pipeline/jobs', { method: 'POST', body: formData });
         if (!res.ok) {
             const err = await res.json();
             throw new Error(err.detail || 'Upload failed');
         }
-        const payload = await res.json();
-        liveData = payload.products;
-        liveCsvUrl = payload.csv_url;
-        nav('dashboard');
+        const { job_id } = await res.json();
+        currentJobId = job_id;
+        pollJobProgress(job_id);
     } catch (err) {
         document.getElementById('upload-loading').style.display = 'none';
         document.getElementById('upload-zone').style.display = '';
         const el = document.getElementById('upload-error');
         el.textContent = err.message;
         el.style.display = 'block';
+    }
+}
+
+async function pollJobProgress(jobId) {
+    const pollInterval = 500; // ms
+    
+    while (true) {
+        await new Promise(r => setTimeout(r, pollInterval));
+        
+        try {
+            const res = await fetch('/pipeline/jobs/' + jobId);
+            if (!res.ok) throw new Error('Failed to fetch job status');
+            const job = await res.json();
+            
+            const pct = job.progress.percent || 0;
+            const bar = document.getElementById('upload-progress-bar');
+            const text = document.getElementById('upload-progress-text');
+            const stats = document.getElementById('upload-stats');
+            
+            if (bar) bar.style.width = pct + '%';
+            if (text) text.textContent = job.status === 'completed' 
+                ? 'Complete!' 
+                : `Processing... ${pct}%`;
+            if (stats) {
+                stats.textContent = `${job.progress.completed}/${job.progress.total} rows`
+                    + ` | ${job.progress.verified} verified`
+                    + ` | ${job.progress.needs_review} needs review`
+                    + ` | ${Math.round(job.progress.rate_per_sec || 0)} rows/sec`
+                    + ` | ETA: ${Math.round(job.progress.eta_seconds || 0)}s`;
+            }
+            
+            if (job.status === 'completed') {
+                liveData = job.products;
+                liveCsvUrl = job.csv_url;
+                setTimeout(() => nav('dashboard'), 800);
+                break;
+            }
+        } catch (err) {
+            console.error('Poll error:', err);
+        }
     }
 }
 
