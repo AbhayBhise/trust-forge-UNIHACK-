@@ -70,11 +70,11 @@ def build_product(row: dict, provider: EvidenceProvider) -> Product:
         product.manufacturer_name = evidence_bundle["_manufacturer_name"]
         product.brand_name = evidence_bundle["_brand_name"]
 
-    # Taxonomy classification: for this demo, all rows routed here are
-    # already known to be dishwashers (identified via Part_Desc keyword
-    # match upstream) - classification confidence reflects that certainty,
-    # not a real classifier model.
-    if "dishwasher" in row["Part_Desc"].lower():
+    # Taxonomy classification: Try to use Classpath from input, else infer from Part_Desc
+    if row.get("Classpath"):
+        product.classpath = row["Classpath"]
+        product.classpath_confidence = 1.0
+    elif "dishwasher" in row["Part_Desc"].lower():
         product.classpath = cfg.CLASSPATH
         product.classpath_confidence = 0.95
     else:
@@ -326,10 +326,33 @@ def _render_descriptions(product: Product, row: dict):
             text = ""
         if field_name == "INVOICE_DESC":
             text = text.upper()
+            if len(text) > cfg.INVOICE_DESC_MAX_LEN:
+                text = text[:cfg.INVOICE_DESC_MAX_LEN].strip()
+        elif field_name == "MOBILE_DESC" and len(text) > cfg.MOBILE_DESC_MAX_LEN:
+            text = text[:cfg.MOBILE_DESC_MAX_LEN].strip()
+        elif field_name == "MATCH_DESC" and len(text) > cfg.MATCH_DESC_MAX_LEN:
+            text = text[:cfg.MATCH_DESC_MAX_LEN].strip()
+        elif field_name == "SHORT_DESC" and len(text) > cfg.SHORT_DESC_MAX_LEN:
+            text = text[:cfg.SHORT_DESC_MAX_LEN].strip()
+        elif field_name == "LONG_DESC1" and len(text) > cfg.LONG_DESC1_MAX_LEN:
+            text = text[:cfg.LONG_DESC1_MAX_LEN].strip()
+        elif field_name == "RETAIL_DESC" and len(text) > cfg.RETAIL_DESC_MAX_LEN:
+            text = text[:cfg.RETAIL_DESC_MAX_LEN].strip()
+        
         descriptions[field_name] = text
+
+    # Add marketing description and item features if available
+    marketing = product.get_attr("Marketing Description")
+    if marketing and marketing.value:
+        descriptions["Marketing Description"] = str(marketing.value)
+    
+    features = product.get_attr("Item Features")
+    if features and features.value:
+        descriptions["Item Features"] = str(features.value)
+
     product.descriptions = descriptions
 
-    # Deterministic file names
+    # Deterministic file names (Digital Assets)
     brand = product.brand_name or ""
     clean_brand = re.sub(r"[®™]", "", brand).strip().replace(" ", "_").upper()
     if clean_brand and product.mfg_part_num:
