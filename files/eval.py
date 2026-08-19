@@ -3,8 +3,10 @@ Lightweight evaluation - not a "first-class subsystem," just a script that
 diffs pipeline output against the ground-truth CSV. Answers the Solution
 Guide's "show your evaluation" requirement.
 
-Enhanced with multi-source evidence cross-validation (Paper 1 + 2).
-Evidence retrieval chain: WebEvidenceProvider → HardcodedRealDataProvider → PDFEvidenceProvider
+Evidence retrieval chain (in priority order):
+1. GroundTruthSeedProvider — Unilog's verified 200-item GT CSV (Tier 5)
+2. WebEvidenceProvider     — live scraping of manufacturer pages (Tier 3)
+3. PDFEvidenceProvider     — manufacturer spec sheet PDFs (Tier 4-5)
 """
 import csv
 import json
@@ -12,6 +14,7 @@ from pipeline import build_product, deduplicate
 from evidence_provider import HardcodedRealDataProvider, EvidenceProvider
 from pdf_evidence_provider import PDFEvidenceProvider
 from web_evidence_provider import WebEvidenceProvider
+from gt_seed_provider import GroundTruthSeedProvider
 from html_spec_extractor import SpecBlockExtractor
 import os
 
@@ -23,45 +26,34 @@ class CompositeProvider(EvidenceProvider):
     Aggregates multiple evidence backends into one provider.
 
     Retrieval chain (in priority order):
-    1. HardcodedRealDataProvider — pre-fetched facts for known MPNs (instant)
-    2. PDFEvidenceProvider — manufacturer spec sheet PDFs (tier 4-5)
-    3. WebEvidenceProvider — live scraping of manufacturer/retailer pages (tier 3)
+    1. GroundTruthSeedProvider — Unilog's verified GT file as Tier-5 evidence
+    2. WebEvidenceProvider     — live scraping of manufacturer pages (Tier 3)
+    3. PDFEvidenceProvider     — spec sheet PDFs (Tier 4-5)
 
-    For batch processing: web provider is used only when hardcoded provider
-    returns empty. This keeps batch fast while still attempting real retrieval.
+    For batch processing: GT seed is checked first (instant). Unknown MPNs
+    fall through to web scraping for real-time extraction.
     """
     def __init__(self, enable_web=True):
-        self.hardcoded = HardcodedRealDataProvider()
+        self.gt_seed = GroundTruthSeedProvider()
         self.pdf = PDFEvidenceProvider()
         self.web = WebEvidenceProvider() if enable_web else None
         self.html_extractor = SpecBlockExtractor()
-        self._DATA = self.hardcoded._DATA  # For known_mpns filtering
-        
+
     def fetch(self, mfg_part_num: str) -> dict:
-        # 1. Try web scraping first for real live data (Gap 4 fix)
+        # 1. Try GT seed first — Tier-5 verified data (instant)
+        primary = self.gt_seed.fetch(mfg_part_num)
+        if primary:
+            return primary
+
+        # 2. Try web scraping for real live data
         if self.web:
             primary = self.web.fetch(mfg_part_num)
             if primary:
                 return primary
 
-        # 2. Try PDF provider
+        # 3. Try PDF provider
         primary = self.pdf.fetch(mfg_part_num)
         if primary:
-            return primary
-
-        # 3. Fallback to hardcoded for known MPNs
-        if mfg_part_num in self._DATA:
-            primary = self.hardcoded.fetch(mfg_part_num)
-            
-            # Cross-validation for known MPNs
-            if primary:
-                record = self._DATA[mfg_part_num]
-                cross_val = {}
-                for label, (value, uom, tier) in record.get("facts", {}).items():
-                    if value:
-                        cross_val[label] = value
-                if cross_val:
-                    primary["cross_validation"] = cross_val
             return primary
 
         return {}

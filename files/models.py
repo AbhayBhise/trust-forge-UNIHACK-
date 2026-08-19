@@ -79,6 +79,9 @@ class Product:
     attributes: list[Attribute] = field(default_factory=list)
     quality_score: dict = field(default_factory=dict)
     descriptions: dict = field(default_factory=dict)
+    # Auxiliary evidence fields for export (sourced from evidence bundle)
+    with_phrase: Optional[str] = None   # e.g. "With CleanBoost™"
+    approvals: Optional[str] = None     # e.g. "UL Listed|ENERGY STAR Certified"
 
     def get_attr(self, name: str) -> Optional[Attribute]:
         for a in self.attributes:

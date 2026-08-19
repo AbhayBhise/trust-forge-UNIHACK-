@@ -81,11 +81,19 @@ EXTRA_PATTERNS = [
     (re.compile(r"Built[\s\-]?in", re.I), "Mounting Type", None),
     (re.compile(r"Freestanding", re.I), "Mounting Type", None),
     (re.compile(r"Countertop", re.I), "Mounting Type", None),
-    # Material
+    # Material / finish — prefer tub/interior material
+    (re.compile(r"(?:Tub|Drum|Interior)\s*(?:Material|Finish)\s*[:\-]\s*([\w\s]+?)(?:\.|,|;|$)", re.I), "Material", None),
     (re.compile(r"Stainless\s*Steel", re.I), "Material", None),
-    (re.compile(r"(?:Tub|Drum)\s*(?:Material|Finish)\s*[:\-]\s*(\w[\w\s]*)", re.I), "Material", None),
-    # Dimensions (Width x Height x Depth)
-    (re.compile(r"(\d+(?:-\d+\/\d+)?)\s*(?:in\.?|inch(?:es)?)?\s*[Wx×]\s*(\d+(?:-\d+\/\d+)?)\s*(?:in\.?|inch(?:es)?)?\s*[Dx×]", re.I), "Size", "in"),
+    # Color
+    (re.compile(r"(?:Color|Colour|Finish)\s*[:\-]\s*(Stainless Steel|White|Black|Slate|Graphite|Bisque|Black Stainless|Silver|Matte Black|Gray|Platinum)", re.I), "Color", None),
+    # Dimensions — H x W x D format (e.g. "33-7/16 in H x 23-7/8 in W x 22-5/8 in D")
+    (re.compile(r"(\d+(?:[\-–]\d+/\d+)?)\s*in\.?\s*H\s*[x×]\s*(\d+(?:[\-–]\d+/\d+)?)\s*in\.?\s*W\s*[x×]\s*(\d+(?:[\-–]\d+/\d+)?)\s*in\.?\s*D", re.I), "Size", "in"),
+    # Depth with door open
+    (re.compile(r"(?:Depth\s+[Ww]ith\s+[Dd]oor\s+[Oo]pen|With\s+[Dd]oor\s+[Oo]pen)\s*[:\-]?\s*(\d+(?:[\-–]\d+/\d+)?)\s*(?:in\.?|inch)?", re.I), "Depth With Door Open", "in"),
+    # Energy/Annual energy
+    (re.compile(r"(\d+)\s*kWh?[\-\s]?(?:per\s+year|annual|yr)", re.I), "Energy Use", "kWh"),
+    # Delay start
+    (re.compile(r"(\d+)\s*(?:to|-)?\s*(\d+)\s*[Hh](?:our)?\s*[Dd]elay", re.I), "Delay Start", "hr"),
     # Sound with range
     (re.compile(r"(\d+)\s*[-–to]+\s*(\d+)\s*dBA", re.I), "Sound Level", "dBA"),
 ]
@@ -126,9 +134,19 @@ ATTR_MAP = {
     "weight": "Weight",
     "product weight": "Weight",
     "height": "Minimum Height",
+    "min height": "Minimum Height",
+    "minimum height": "Minimum Height",
+    "max height": "Maximum Height",
+    "maximum height": "Maximum Height",
+    "adjustable height": "Maximum Height",
     "width": "Width",
     "energy star": "Energy Star",
     "energy rating": "Energy Star",
+    "energy use": "Additional Information",
+    "additional information": "Additional Information",
+    "delay start": "Additional Information",
+    "color": "Color",
+    "colour": "Color",
     "warranty": "Warranty",
 }
 
@@ -332,12 +350,16 @@ class WebEvidenceProvider(EvidenceProvider):
         # Infer brand/manufacturer from page
         brand_name, manufacturer = self._infer_brand(cleaned_html, source_name)
         series = self._extract_series(text)
+        with_phrase = self._extract_with_phrase(text)
+        approvals = self._extract_approvals(text)
 
         return {
             "_manufacturer_name": manufacturer or source_name.title(),
             "_brand_name": brand_name or mpn,
             "_series": series,
             "_mfr_url": page_url,
+            "_with_phrase": with_phrase,
+            "_approvals": approvals,
             "facts": facts,
         }
 
@@ -410,6 +432,31 @@ class WebEvidenceProvider(EvidenceProvider):
             if match:
                 return match.group(0).strip().rstrip(".,")
         return None
+
+    def _extract_with_phrase(self, text: str) -> Optional[str]:
+        """Extract 'With X' feature phrase (e.g. 'With CleanBoost™')."""
+        patterns = [
+            re.compile(r"With\s+([A-Z][A-Za-z\s™®]+?)(?:\s*,|\s*\.|$)", re.M),
+            re.compile(r"featuring\s+([A-Z][A-Za-z\s™®]+?)(?:\s*,|\s*\.|$)", re.I),
+        ]
+        for pat in patterns:
+            m = pat.search(text)
+            if m:
+                phrase = m.group(0).strip().rstrip(".,")
+                if len(phrase) < 60:
+                    return phrase
+        return None
+
+    def _extract_approvals(self, text: str) -> Optional[str]:
+        """Extract standards and certifications (e.g. 'UL Listed|ENERGY STAR Certified')."""
+        known = [
+            "UL Listed", "cUL Listed", "ENERGY STAR Certified", "Energy Star",
+            "NSF Certified", "CSA Certified", "ASSE 1006",
+            "CEE Tier 2 Qualified", "CEE Tier 3 Qualified",
+            "ADA Compliant", "DOE Compliant", "EPA Certified",
+        ]
+        found = [cert for cert in known if cert.lower() in text.lower()]
+        return "|".join(found) if found else None
 
     def _find_pdf_links(self, soup, base_url: str) -> list[str]:
         """Find PDF spec sheet/manual links on a manufacturer page."""
