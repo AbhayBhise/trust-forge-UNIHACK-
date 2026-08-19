@@ -51,16 +51,16 @@ EVIDENCE_TIER_WEIGHTS = {
 }
 
 # Section 6: confidence formula weights (enhanced with research-paper insights)
-# Original weights + normalization_boost (Paper 1) + cross_validation (Paper 2)
-# Weights are rebalanced so total remains ~1.0 before penalty.
+# Rebalanced: reduced title_match (sparse CSV descriptions are too short),
+# increased evidence_tier (manufacturer PDFs are gold standard).
 CONFIDENCE_WEIGHTS = {
     "identity_verified": 0.22,
     "manufacturer_match": 0.18,
-    "title_match": 0.14,
+    "title_match": 0.06,       # Reduced: sparse CSV descriptions penalize accurate data
     "unit_normalized": 0.14,
     "taxonomy_valid": 0.14,
-    "evidence_tier": 0.10,
-    "normalization_boost": 0.08,  # Paper 1: value matched known canonical form
+    "evidence_tier": 0.18,     # Increased: manufacturer PDFs = highest quality evidence
+    "normalization_boost": 0.08,
 }
 MISSING_REQUIRED_PENALTY = 0.30
 AUTO_APPROVE_THRESHOLD = 0.75

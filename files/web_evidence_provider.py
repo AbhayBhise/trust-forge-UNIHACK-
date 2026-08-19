@@ -261,6 +261,33 @@ class WebEvidenceProvider(EvidenceProvider):
         all_specs.update(generic_specs)
         all_specs.update(targeted_specs)
         
+        # Method 3: Hunt for PDF spec sheets on the page
+        pdf_urls = self._find_pdf_links(soup, page_url)
+        for pdf_url in pdf_urls[:2]:  # Try top 2 PDFs
+            try:
+                self._throttle()
+                pdf_resp = self.session.get(pdf_url, timeout=TIMEOUT)
+                if pdf_resp.status_code == 200 and len(pdf_resp.content) > 1000:
+                    import fitz  # PyMuPDF
+                    doc = fitz.open(stream=pdf_resp.content, filetype="pdf")
+                    pdf_text = ""
+                    for page in doc:
+                        pdf_text += page.get_text()
+                    doc.close()
+                    # Extract from PDF text
+                    pdf_specs = self._extract_targeted(pdf_text, mpn)
+                    for attr_label, (value, uom, ev) in pdf_specs.items():
+                        canonical = self._canonicalize(attr_label)
+                        if canonical and value and canonical not in all_specs:
+                            ev.source_url = pdf_url
+                            ev.source_tier = 5  # PDF = highest tier
+                            ev.page_or_section = "PDF spec sheet"
+                            all_specs[canonical] = (value, uom, ev)
+                    if pdf_text:
+                        log.info(f"  PDF extracted from: {pdf_url}")
+            except Exception as e:
+                log.debug(f"  PDF fetch failed: {pdf_url}: {e}")
+
         # Map to canonical attribute names and build evidence bundle
         facts = {}
         for raw_attr, (value, uom, ev) in all_specs.items():
@@ -355,3 +382,33 @@ class WebEvidenceProvider(EvidenceProvider):
             if match:
                 return match.group(0).strip().rstrip(".,")
         return None
+
+    def _find_pdf_links(self, soup, base_url: str) -> list[str]:
+        """Find PDF spec sheet/manual links on a manufacturer page."""
+        pdf_urls = []
+        base_domain = base_url.split("/")[2] if "/" in base_url else ""
+        
+        pdf_keywords = ["spec", "sheet", "manual", "datasheet", "specification", "brochure", "product"]
+        
+        for tag in soup.find_all("a", href=True):
+            href = tag["href"].lower()
+            link_text = tag.get_text(strip=True).lower()
+            
+            # Must be a PDF link
+            if not href.endswith(".pdf"):
+                continue
+            
+            # Should be from same manufacturer domain or relative
+            full_url = tag["href"]
+            if full_url.startswith("/"):
+                full_url = f"https://{base_domain}{full_url}"
+            elif not full_url.startswith("http"):
+                continue
+            
+            # Check if link text or href suggests it's a spec sheet
+            if any(kw in href or kw in link_text for kw in pdf_keywords):
+                pdf_urls.append(full_url)
+            elif base_domain in full_url:
+                pdf_urls.append(full_url)
+        
+        return pdf_urls
