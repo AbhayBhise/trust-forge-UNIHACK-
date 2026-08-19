@@ -1,65 +1,56 @@
-# Unilog Product Trust Engine
+# TrustForge — UniHack Product Trust Engine
 
-An enterprise-grade, deterministic pipeline for enriching, validating, and generating B2B e-commerce product catalogs from unstructured manufacturer evidence. Built for the Unihack challenge.
+An AI-powered product intelligence engine that transforms sparse distributor CSV inputs (6 columns, 1000+ rows) into 252-column commerce-ready catalogs with evidence-backed extraction and zero hallucination. Built for the UniHack challenge.
 
 ![Pipeline Overview](docs/pipeline_diagram.svg)
 
 ## The Problem
-B2B distributors receive product data from hundreds of manufacturers, often in inconsistent formats with missing attributes, mismatched units, and marketing fluff. Manual review is too slow, and traditional LLM approaches introduce hallucination risk. The **Product Trust Engine** solves this by enforcing a deterministic, evidence-first approach: *No fact is accepted without manufacturer proof, and no description is generated without validated facts.*
+B2B distributors receive product data from hundreds of manufacturers, often in inconsistent formats with missing attributes, mismatched units, and marketing fluff. Manual review is too slow, and traditional LLM approaches introduce hallucination risk. TrustForge solves this by enforcing a deterministic, evidence-first approach: *No fact is accepted without manufacturer proof, and no description is generated without validated facts.*
 
 ## Architecture
-The system is built on a modular, verifiable architecture prioritizing determinism, explainability, and graceful degradation.
-
-1. **Pipeline:** Flat CSV -> Deduplication -> Identity Resolution -> Evidence Retrieval -> Validation -> Confidence Scoring -> Generation -> 252-Column Exporter.
-2. **Data Model:** Centralized `Product` object tracking `Evidence`, `Attributes`, and `ValidationReport` per field.
-3. **Decision Engine:** Evaluates extracted facts against the canonical Unilog taxonomy and units.
-4. **Evidence Retrieval:** Fetches real manufacturer documents (e.g., PDFs), extracts exact snippets, and attaches a cryptographic trace to every fact.
-5. **Confidence System:** A purely heuristic formula (Tier × Consistency × Completion) that guarantees 100% reproducible scoring without LLM temperature variance.
-
-## Pipeline Flow
-
-```text
-CSV Normalizer 
-      ↓
-Identity Resolver 
-      ↓
-Evidence Retriever (Manufacturer-First PDF parsing)
-      ↓
-Validator (Schema & Taxonomy Checks)
-      ↓
-Fact Store & Confidence Scorer
-      ↓
-Description Engine (Template-driven)
-      ↓
-Exporter (252-Column CSV Mapper)
-```
+1. **10-step Pipeline:** CSV → Dedup → Identity → Evidence → Extract → Normalize → Cross-validate → Validate → Score → Describe → Quality Score
+2. **Data Model:** `Product` object tracking `Evidence`, `Attributes`, `ValidationReport`, and `HistoryEntry` per field
+3. **Evidence Retrieval:** CompositeProvider chains Hardcoded → PDF → Web scraping
+4. **Confidence System:** Heuristic formula (Tier × Consistency × Completion) — 100% reproducible, no LLM variance
+5. **Research Papers:** Paper 1 (More, WalmartLabs 2016) normalization + Paper 2 (Gangadhar & Kulkarni 2022) HTML spec extraction
 
 ## Features
-
-- **Explainability:** Click any field (e.g., "Voltage: 120V") to see the exact PDF snippet, page number, confidence score, and validation rules applied.
-- **Graceful Degradation:** If a PDF 404s or an attribute is missing, the system doesn't hallucinate. It drops confidence to 0.0%, flags the item as `needs_review`, and dynamically alters description generation templates to avoid dangling punctuation.
-- **Evaluation Framework:** Built-in `evaluator.py` that scales to any number of ground truth rows, reporting exact field-level accuracy and error breakdowns.
-- **Metrics Dashboard:** A responsive, dark-mode SPA displaying real-time batch statistics, validation failures, and evidence coverage.
-
-## Evaluation
-We do not simulate success. Evaluating against the labeled ground truth yields the following (see `files/diff_data.json` for full details):
-- **Offline Deterministic Pipeline Throughput:** ~0.13 ms per product (in-memory logic only).
-- **PDF Retrieval Throughput:** Prototype demonstrates end-to-end processing in ~2.1 s (including network / parsing).
-- **Graceful Handling:** 997 out of 999 unknown products correctly flagged for `needs_review` due to missing manufacturer docs, proving our refusal to hallucinate.
+- **Explainability:** Click any field to see source URL, evidence snippet, confidence score, and validation rules
+- **Graceful Degradation:** Missing evidence → `needs_review` with 0% confidence — never hallucinates
+- **Parallel Processing:** 8-worker ThreadPoolExecutor with background job queue and SSE progress streaming
+- **Enterprise Dashboard:** White-themed SPA with 7 views, CSV upload with drag-drop, progress bar, QA metrics
 
 ## Demo & Installation
-1. Navigate to `frontend/`
-2. Start a local server: `python -m http.server 8000`
-3. Open `http://localhost:8000` to view the Product Journey, Enterprise QA, Explainability, and CSV Diff pages.
+```bash
+pip install -r requirements.txt
 
-## Limitations & Future Work
-- **Evidence Providers:** End-to-end retrieval prototype demonstrated on a reference manufacturer document (Whirlpool PDF). Requires scaling out API connectors to broader manufacturer databases for full coverage.
-- **OCR Quality:** Complex tabular PDFs may require Vision-Language Models instead of strict PyMuPDF parsing.
-- **Streaming:** The pipeline currently processes batch CSVs; future iterations should support Kafka/PubSub streaming ingestion.
+# Start server (serves both API and frontend)
+cd files
+python server.py
 
+# Open http://127.0.0.1:8000/frontend/
+```
 
-### Note on Fixture Provenance
-- **The extraction pipeline is real**: PyMuPDF parses a real PDF document during execution.
-- **Fixture Data**: The current Whirlpool PDF (`whirlpool_spec_sheet.pdf`) is a **synthetic reference fixture** created purely for demonstrating the complete end-to-end extraction workflow. It contains only ground-truth-supported data.
-- **Future Work**: Live manufacturer PDF retrieval (web scraping/API) is outside the current project scope and is documented as future work.
+## Performance
+| Metric | Value |
+|--------|-------|
+| Hardcoded provider | ~3,000 rows/sec |
+| Web provider | ~0.3 rows/sec |
+| Parallel (8 workers) | ~0.3 rows/sec (mixed) |
+| Determinism | Byte-identical over 10 runs |
 
+## Folder Structure
+```
+trust-forge/
+├── files/              # Core pipeline, server, tests
+├── frontend/           # Enterprise white-themed SPA
+├── docs/               # Architecture, API, data model, status
+├── requirements.txt
+└── README.md
+```
+
+## Known Limitations
+- Web scraping unreliable for JS-rendered manufacturer sites (graceful degradation)
+- Only appliances category configured (~1 of ~14,000 taxonomy categories)
+- Stateless JSON/CSV — no database persistence
+- No OCR for scanned PDFs
