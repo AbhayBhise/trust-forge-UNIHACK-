@@ -1,8 +1,8 @@
-**Version:** 3.0
-**Date:** 2026-08-18
+**Version:** 4.0
+**Date:** 2026-08-19
 **Owner:** TrustForge Team
 **Status:** Active
-**Last Updated:** 2026-08-18
+**Last Updated:** 2026-08-19
 
 # Claim Verification
 
@@ -11,12 +11,17 @@
 | **Deterministic pipeline** | YES | `pipeline.py` uses hardcoded logic, regex, static config. No LLMs. 10-run determinism test passes. | Locked |
 | **Zero hallucination** | YES | Doc-First philosophy enforced. Unknown MPNs → `needs_review` with 0% confidence. | Locked |
 | **Real PDF parsing** | YES | `PDFEvidenceProvider` parses real PDFs via PyMuPDF. | Complete |
-| **Real web evidence** | YES | `WebEvidenceProvider` scrapes manufacturer sites. Real data extracted for some MPNs. | Complete |
-| **Parallel processing** | YES | `ThreadPoolExecutor` with 8 workers. Background job queue with progress tracking. | Complete |
+| **Real web evidence** | YES | `WebEvidenceProvider` scrapes manufacturer sites (e-commerce FORBIDDEN). Real data extracted for some MPNs. | Complete |
+| **Parallel processing** | YES | `ThreadPoolExecutor` with 24 workers (increased from 8). Background job queue with progress tracking. | Complete |
 | **Graceful degradation** | YES | Unknown MPNs → `needs_review`. Web timeouts → fallback. Errors don't crash batch. | Locked |
 | **Works on 1000 rows** | YES | `run_batch.py` processes all 1000 rows. MAX_ROWS = 10,000. | Complete |
-| **Explainable confidence** | YES | Every field has evidence chain, validation report, confidence score. | Locked |
+| **Explainable confidence** | YES | Every field has evidence chain, validation report, confidence score. View Source buttons. | Locked |
 | **Export matches schema** | YES | Output CSV matches exact 252-column schema. `export_mapper.py` maps all columns. | Locked |
 | **68.3% accuracy** | YES | Ground truth validation: 82/120 fields matched. 4 GT quality issues found. | Complete |
-| **26+ tests passing** | YES | 13 test files across unittest and standalone scripts. | Complete |
+| **31+ tests passing** | YES | 14 test files across unittest and standalone scripts (increased from 26+). | Complete |
 | **Research papers implemented** | YES | Paper 1 → `normalizer.py`. Paper 2 → `html_spec_extractor.py`. | Complete |
+| **Smart column detection** | YES | `column_detector.py` auto-maps ANY CSV column name. 12 tests passing. | Complete |
+| **Flexible input** | YES | System accepts ANY CSV format. No hardcoded REQUIRED_SCHEMA. | Complete |
+| **Persistent cache** | YES | Web evidence cached to disk (`web_evidence_cache.json`). Second run instant. | Complete |
+| **Manufacturer-only evidence** | YES | E-commerce sources (Amazon, HomeDepot, Lowe's) removed from `web_evidence_provider.py`. | Complete |
+| **6 description types** | YES | Invoice (40), Mobile (80), Match (120), Short (200), Retail (500), Long (800) with character limits. | Complete |

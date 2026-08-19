@@ -1,8 +1,8 @@
-**Version:** 2.0  
-**Date:** 2026-08-17  
-**Owner:** TrustForge Team  
-**Status:** Active  
-**Last Updated:** 2026-08-17
+**Version:** 3.0
+**Date:** 2026-08-19
+**Owner:** TrustForge Team
+**Status:** Active
+**Last Updated:** 2026-08-19
 
 # Demo Script
 
@@ -11,10 +11,10 @@ Target Time: < 5 minutes
 | Step | Action | Expected Output | Fallback | Time |
 |------|--------|-----------------|----------|------|
 | **1. Architecture** | Open `categories.html` | Configuration-driven architecture explanation. | Skip to dashboard | 30s |
-| **2. Dashboard Stats** | Open `index.html` | KPI cards showing verified/needs_review counts, pipeline health. | Refresh browser | 30s |
+| **2. Smart Detection** | Upload CSV with ANY column names | System auto-detects columns, shows detection results. | Show column map | 30s |
 | **3. Upload CSV** | Drag-drop input CSV | Progress bar with real-time updates (rows/sec, ETA, verified/needs_review counts). | Show batch results | 60s |
 | **4. Product Journey** | Click product row → Journey view | Animated pipeline steps: Identity → Evidence → Extract → Validate → Score → Describe → Export. | Show JSON output | 45s |
-| **5. Attribute Details** | Click "View Product Details" | Confidence bars, validation pass rate, evidence sources, generated descriptions. | Show raw data | 45s |
+| **5. Attribute Details** | Click "View Product Details" | Confidence bars, validation pass rate, evidence sources, generated descriptions. View Source buttons. | Show raw data | 45s |
 | **6. Explainability** | Click "Explain" on attribute | Evidence chain, validation rules passed, source URLs, confidence breakdown. | Manual explanation | 45s |
 | **7. Ground Truth Diff** | Click "Ground Truth" tab | Side-by-side expected vs. generated with color-coded diffs and reason tooltips. | Show evaluation report | 45s |
 | **8. QA Metrics** | Click "QA" tab | 68.3% accuracy, GT quality issues, validation pass rates, determinism verification. | Show test results | 30s |
@@ -24,11 +24,14 @@ Total Time: ~360 seconds (6 minutes).
 
 ## Key Demo Points
 
-1. **Zero Hallucination**: Unknown MPNs get `needs_review` with 0% confidence — no fabricated data.
-2. **Evidence Traceability**: Every attribute has a source URL, tier, and retrieval timestamp.
-3. **Parallel Processing**: Upload 1000 rows, see real-time progress with ETA.
-4. **Graceful Degradation**: Web scraping failures don't crash the system.
-5. **Research Papers**: Paper 1 (Normalizer) and Paper 2 (HTML Spec Extractor) are real implementations.
+1. **Smart Column Detection**: Upload ANY CSV format — system auto-detects MPN, manufacturer, brand, description columns.
+2. **Zero Hallucination**: Unknown MPNs get `needs_review` with 0% confidence — no fabricated data.
+3. **Evidence Traceability**: Every attribute has a source URL, tier, and retrieval timestamp. View Source buttons.
+4. **Parallel Processing**: Upload 1000 rows, see real-time progress with ETA (24 workers).
+5. **Graceful Degradation**: Web scraping failures don't crash the system.
+6. **Manufacturer-Only Evidence**: No e-commerce sources (Amazon, etc.) — compliant with Unilog guidelines.
+7. **Research Papers**: Paper 1 (Normalizer) and Paper 2 (HTML Spec Extractor) are real implementations.
+8. **6 Description Types**: Invoice, Mobile, Match, Short, Retail, Long with character limits.
 
 ## Backup Demo (If Live Fails)
 
@@ -36,3 +39,4 @@ Total Time: ~360 seconds (6 minutes).
 2. Walk through pipeline journey for WDTS7024RZ (known MPN)
 3. Show validation report in `validate_ground_truth.py` output
 4. Show 252-column export in Excel
+5. Show column detection working with alternative CSV formats
