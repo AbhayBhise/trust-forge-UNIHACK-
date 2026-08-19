@@ -28,7 +28,6 @@ Thumbs.db
 desktop.ini
 
 # Local development docs (not for remote)
-HANDOVER.md
 files/Antigravity-Build-Prompt.md
 
 # Data files (contain distributor/product data)

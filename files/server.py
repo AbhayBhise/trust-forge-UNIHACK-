@@ -329,7 +329,7 @@ async def health():
     return {"status": "ok", "version": "1.0.0"}
 
 
-# Mount static files
+# Mount static files (API routes first, then static fallback)
 frontend_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "frontend")
 files_dir = os.path.dirname(os.path.abspath(__file__))
 
@@ -338,4 +338,6 @@ app.mount("/files", StaticFiles(directory=files_dir), name="files")
 
 if __name__ == "__main__":
     import uvicorn
+    print(f"\n  TrustForge running at: http://127.0.0.1:8000\n")
+    print(f"  Open: http://127.0.0.1:8000/frontend/\n")
     uvicorn.run(app, host="127.0.0.1", port=8000)

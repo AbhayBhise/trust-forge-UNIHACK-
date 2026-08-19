@@ -18,24 +18,17 @@ const VIEW_TITLES = {
 async function init() {
     try {
         const pRes = await fetch('../files/demo_output.json');
-        productsData = await pRes.json();
-        try {
-            const dRes = await fetch('../files/diff_data.json');
-            diffData = await dRes.json();
-            const rcRes = await fetch('../files/root_cause_report.json');
-            rcData = await rcRes.json();
-        } catch (e) { /* optional data */ }
-        nav('dashboard');
-    } catch (e) {
-        document.getElementById('app-content').innerHTML = `
-            <div class="card" style="max-width:480px;margin:4rem auto;text-align:center">
-                <div style="font-size:2rem;margin-bottom:1rem;color:var(--gray-300)">&#9888;</div>
-                <div class="card-title">Unable to Load Data</div>
-                <p style="color:var(--gray-500);margin-top:0.5rem;font-size:0.875rem">
-                    Start the backend server first:<br><code style="background:var(--gray-100);padding:0.25rem 0.5rem;border-radius:4px;font-size:0.8125rem">cd files && python server.py</code>
-                </p>
-            </div>`;
-    }
+        if (pRes.ok) {
+            productsData = await pRes.json();
+            try {
+                const dRes = await fetch('../files/diff_data.json');
+                if (dRes.ok) diffData = await dRes.json();
+                const rcRes = await fetch('../files/root_cause_report.json');
+                if (rcRes.ok) rcData = await rcRes.json();
+            } catch (e) { /* optional data */ }
+        }
+    } catch (e) { /* no pre-existing data */ }
+    nav(productsData.length ? 'dashboard' : 'upload');
 }
 
 function nav(view, args = null) {
@@ -402,7 +395,8 @@ function renderDetail(index) {
 
 /* ── Explainability ───────────────────────────────────────────────── */
 function renderExplain(args) {
-    const p = productsData[args.pIdx];
+    const data = liveData || productsData;
+    const p = data[args.pIdx];
     const a = p.attributes[args.aIdx];
 
     let evHtml = '<div style="color:var(--gray-400);font-size:0.875rem;padding:1rem">No evidence attached.</div>';

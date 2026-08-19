@@ -1,8 +1,8 @@
-**Version:** 2.0  
-**Date:** 2026-08-17  
-**Owner:** TrustForge Team  
-**Status:** Active  
-**Last Updated:** 2026-08-17
+**Version:** 3.0
+**Date:** 2026-08-18
+**Owner:** TrustForge Team
+**Status:** Active
+**Last Updated:** 2026-08-18
 
 # Project Status Dashboard
 
@@ -27,104 +27,69 @@
 ## Module Status
 
 ### Identity Resolution
-**Progress:** 100%  
-**Status:** Complete  
-**Tests:** 2/2 passing  
-**Features:** MPN normalization, brand placeholder detection, cross-brand resolution  
-**Known Issues:** None
+**Status:** Complete
+**Tests:** test_pipeline (2 tests)
 
 ### Attribute Model & Configuration
-**Progress:** 100%  
-**Status:** Complete  
-**Tests:** 3/3 passing  
-**Features:** 50 appliance attributes, UOM standards, VALID_VALUES, enum enforcement  
-**Known Issues:** None
+**Status:** Complete
+**Tests:** test_config_appliances (3 tests)
 
 ### Evidence Retrieval
-**Progress:** 100%  
-**Status:** Complete  
-**Providers:** HardcodedRealDataProvider, PDFEvidenceProvider, WebEvidenceProvider  
-**Features:** CompositeProvider chains providers, graceful degradation, per-MPN timeout  
-**Known Issues:** Web scraping unreliable for JS-rendered sites (gracefully degrades)
+**Status:** Complete
+**Providers:** HardcodedRealDataProvider, PDFEvidenceProvider, WebEvidenceProvider, CompositeProvider
 
 ### Normalization (Paper 1)
-**Progress:** 100%  
-**Status:** Complete  
-**Tests:** 1/1 passing  
-**Features:** 40+ normalization rules, UOM enforcement, canonical value mapping  
-**Known Issues:** None
+**Status:** Complete
+**Tests:** test_new_modules (standalone)
 
 ### HTML Spec Extraction (Paper 2)
-**Progress:** 100%  
-**Status:** Complete  
-**Tests:** 1/1 passing  
-**Features:** Wrapper induction, seed-based discovery, spec block detection  
-**Known Issues:** None
+**Status:** Complete
+**Tests:** test_new_modules (standalone)
 
 ### Validation & Confidence
-**Progress:** 100%  
-**Status:** Complete  
-**Tests:** 3/3 passing  
-**Features:** Multi-factor confidence, cross-evidence validation, enum checking  
-**Known Issues:** None
+**Status:** Complete
+**Tests:** test_validation (3 tests)
 
 ### Description Generation
-**Progress:** 100%  
-**Status:** Complete  
-**Tests:** 1/1 passing  
-**Features:** Deterministic templates, verified-attribute-only descriptions  
-**Known Issues:** None
+**Status:** Complete
+**Tests:** test_pipeline (1 test)
 
 ### 252-Column Export Mapper
-**Progress:** 100%  
-**Status:** Complete  
-**Tests:** 1/1 passing  
-**Features:** Category-specific field mappings, 100% column coverage  
-**Known Issues:** None
+**Status:** Complete
+**Tests:** test_mapper (1 test)
 
 ### FastAPI Server
-**Progress:** 100%  
-**Status:** Complete  
-**Features:** Parallel processing (8 workers), job queue, progress tracking, SSE streaming  
-**Known Issues:** None
+**Status:** Complete
+**Routes:** 5 endpoints (process, jobs, job status, SSE stream, health)
 
 ### Frontend
-**Progress:** 100%  
-**Status:** Complete  
-**Features:** 7 views, CSV upload with drag-drop, progress bar, QA metrics  
-**Known Issues:** None
-
-### Validation Report
-**Progress:** 100%  
-**Status:** Complete  
-**Features:** 68.3% accuracy, 8-section validation, GT quality audit  
-**Known Issues:** None
+**Status:** Complete
+**Views:** 7 (dashboard, upload, diff, qa, journey, detail, explain)
 
 ---
 
-## Test Suite
+## Test Files
 
-| Test File | Tests | Status |
-|-----------|-------|--------|
-| test_pipeline | 5 | All passing |
-| test_models | 3 | All passing |
-| test_config_appliances | 3 | All passing |
-| test_validation | 3 | All passing |
-| test_robustness | 4 | All passing |
-| test_qa_audits | 4 | All passing |
-| test_determinism | 2 | All passing |
-| test_mapper | 1 | All passing |
-| test_new_modules | 1 | All passing |
-| **Total** | **26** | **All passing** |
+| File | Type | Tests |
+|------|------|-------|
+| test_pipeline.py | unittest | 5 |
+| test_models.py | unittest | 3 |
+| test_config_appliances.py | unittest | 3 |
+| test_validation.py | unittest | 3 |
+| test_robustness.py | unittest | 4 |
+| test_qa_audits.py | unittest | 4 |
+| test_determinism.py | unittest | 3 |
+| test_mapper.py | unittest | 1 |
+| test_new_modules.py | standalone | assertions |
+| test_zero_evidence.py | standalone | assertions |
 
 ---
 
-## Validation Report Summary
+## Known Gaps (from UniHack session 2026-08-18)
 
-- **Ground Truth Accuracy:** 68.3% (82/120 fields matched)
-- **Identity Resolution:** 100% accuracy
-- **Attribute Extraction:** 85.5% accuracy
-- **Description Generation:** 66.7% accuracy
-- **GT Quality Issues Found:** 4 (our output is MORE correct)
-- **Zero Hallucination:** Verified — no fabricated data
-- **Determinism:** Verified across 10 consecutive runs
+1. **Source restriction**: We scrape Amazon/HomeDepot/Lowe's — Unilog forbids e-commerce sources
+2. **Category taxonomy**: We have 1 category (appliances). Unilog has ~14,000
+3. **Hardcoded provider**: Pre-fetched data for 2 MPNs could be flagged as "mocked"
+4. **Missing output fields**: 4-5 description types, marketing desc, item features, digital assets
+5. **No LOV file**: We built small hand-crafted lookups, not the full taxonomy LOV
+6. **Source URL traceability**: Not always populated for every attribute value
