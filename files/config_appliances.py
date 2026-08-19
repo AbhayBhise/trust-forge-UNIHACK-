@@ -26,6 +26,16 @@ ATTRIBUTES = [
     ("Material", "enum", None, True),
     ("Color", "enum", None, False),
     ("Additional Information", "text", None, False),
+    ("Warranty", "text", None, False),
+    ("EAN/UPC", "text", None, False),
+    ("List Price", "number", "$", False),
+    ("Packaging Length", "number", "in", False),
+    ("Packaging Width", "number", "in", False),
+    ("Packaging Height", "number", "in", False),
+    ("Marketing Description", "text", None, False),
+    ("Item Features", "text", None, False),
+    ("Product Image URL", "text", None, False),
+    ("Specification Sheet URL", "text", None, False),
 ]
 
 MOUNTING_TYPE_VALUES = {"Leg", "Built-in"}
@@ -66,13 +76,18 @@ MAX_EVIDENCE_SOURCES = 3
 TEMPLATES = {
     "INVOICE_DESC": "{item_type_abbr} {mounting_abbr} {cycles} {material_abbr} {voltage_invoice} {amps_invoice} {tail}",
     "MOBILE_DESC": "{manufacturer_name} {brand_name}, {product_name}{series_phrase}, {mfg_part_num}",
+    "MATCH_DESC": "{brand_name} {series} {mfg_part_num} {product_name}",
     "SHORT_DESC": "{brand_name} {series} {mfg_part_num} {product_name}{mounting_phrase}{cycles_phrase}{material_phrase}",
     "LONG_DESC1": "{brand_name} {product_name}{series_phrase}{cycles_phrase_plural}{voltage_phrase}{amps_phrase}{mounting_phrase}{size_phrase}{depth_phrase}{sound_phrase}{material_phrase}",
     "RETAIL_DESC": "{series} {product_name}{mounting_phrase}{cycles_phrase}{material_phrase}",
 }
 
 INVOICE_DESC_MAX_LEN = 40
-MOBILE_DESC_RANGE = (60, 80)
+MOBILE_DESC_MAX_LEN = 80
+MATCH_DESC_MAX_LEN = 120
+SHORT_DESC_MAX_LEN = 200
+RETAIL_DESC_MAX_LEN = 500
+LONG_DESC1_MAX_LEN = 800
 
 # ── UOM Standards (from Solution Guide: "always keep a space between number and unit") ──
 # Only the approved abbreviations for appliance attributes.
@@ -113,6 +128,9 @@ VALID_VALUES = {
         "Undercounter",
         "Slide-In",
         "Drop-In",
+        "Wall Mount",
+        "Panel-Ready",
+        "Portable",
     },
     "Material": {
         "Stainless Steel",
@@ -140,6 +158,10 @@ VALID_VALUES = {
         "Bisque",
         "Platinum",
         "Graphite",
+        "Matte Black",
+        "Slate",
+        "Black Stainless",
+        "Custom Panel",
     },
     "Series": {
         "Eco Series",
