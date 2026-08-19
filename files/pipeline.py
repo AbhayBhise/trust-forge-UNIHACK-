@@ -60,10 +60,14 @@ def build_product(row: dict, provider: EvidenceProvider) -> Product:
     product = Product(mfg_part_num=mpn, part_desc=row.get("Part_Desc", ""))
 
     try:
-        evidence_bundle = provider.fetch(mpn)
+        # Use fetch_with_row when available (gives DescriptionExtractionProvider
+        # access to Part_Desc, E1_Brand, Part_Manuf for universal attribute extraction)
+        if hasattr(provider, "fetch_with_row"):
+            evidence_bundle = provider.fetch_with_row(mpn, row)
+        else:
+            evidence_bundle = provider.fetch(mpn)
         evidence_found = bool(evidence_bundle)
-    except Exception as e:
-        # Graceful degradation on network or extraction errors
+    except Exception:
         evidence_bundle = {}
         evidence_found = False
 
@@ -89,6 +93,8 @@ def build_product(row: dict, provider: EvidenceProvider) -> Product:
 
     facts = evidence_bundle.get("facts", {}) if evidence_found else {}
 
+    # ── Step 2a: Category-specific attributes (dishwasher config) ────
+    existing_labels = set()
     for label, dtype, uom_expected, required in cfg.ATTRIBUTES:
         attr = Attribute(attribute=label, required=required)
         if label == "Series" and evidence_found:
@@ -102,8 +108,25 @@ def build_product(row: dict, provider: EvidenceProvider) -> Product:
             attr.status = "verified"
         else:
             attr.status = "needs_review" if required else "unknown"
-
         product.attributes.append(attr)
+        existing_labels.add(label)
+
+    # ── Step 2b: Generic facts pass — captures extracted attributes ───
+    # For any fact in the evidence bundle not covered by the appliance config
+    # (e.g. Abrasive Grade, Quantity, Edge Type, Color for non-appliance rows),
+    # create a new Attribute object so it appears in output.
+    if facts:
+        for fact_label, (value, uom, ev) in facts.items():
+            if fact_label not in existing_labels and value:
+                attr = Attribute(
+                    attribute=fact_label,
+                    value=value,
+                    uom=uom,
+                    status="verified",
+                    required=False,
+                )
+                attr.evidence.append(ev)
+                product.attributes.append(attr)
 
     # ── Step 2.5: Attribute Normalization (Paper 1, Section 8.1) ──────
     # Normalize attribute values to canonical forms AFTER extraction,

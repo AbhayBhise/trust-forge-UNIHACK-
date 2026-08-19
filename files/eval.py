@@ -1,12 +1,11 @@
 """
-Lightweight evaluation - not a "first-class subsystem," just a script that
-diffs pipeline output against the ground-truth CSV. Answers the Solution
-Guide's "show your evaluation" requirement.
+Lightweight evaluation and provider composition.
 
 Evidence retrieval chain (in priority order):
-1. GroundTruthSeedProvider — Unilog's verified 200-item GT CSV (Tier 5)
-2. WebEvidenceProvider     — live scraping of manufacturer pages (Tier 3)
-3. PDFEvidenceProvider     — manufacturer spec sheet PDFs (Tier 4-5)
+1. GroundTruthSeedProvider  — Unilog's verified GT CSV (Tier 5)
+2. WebEvidenceProvider      — live manufacturer page scraping (Tier 3)
+3. PDFEvidenceProvider      — spec sheet PDFs (Tier 4-5)
+4. DescriptionExtractionProvider — Doc-First from Part_Desc (Tier 2)
 """
 import csv
 import json
@@ -15,6 +14,7 @@ from evidence_provider import HardcodedRealDataProvider, EvidenceProvider
 from pdf_evidence_provider import PDFEvidenceProvider
 from web_evidence_provider import WebEvidenceProvider
 from gt_seed_provider import GroundTruthSeedProvider
+from desc_extraction_provider import DescriptionExtractionProvider
 from html_spec_extractor import SpecBlockExtractor
 import os
 
@@ -26,36 +26,65 @@ class CompositeProvider(EvidenceProvider):
     Aggregates multiple evidence backends into one provider.
 
     Retrieval chain (in priority order):
-    1. GroundTruthSeedProvider — Unilog's verified GT file as Tier-5 evidence
-    2. WebEvidenceProvider     — live scraping of manufacturer pages (Tier 3)
-    3. PDFEvidenceProvider     — spec sheet PDFs (Tier 4-5)
+    1. GroundTruthSeedProvider      — Unilog's verified GT file (Tier 5, instant)
+    2. WebEvidenceProvider          — live manufacturer page scraping (Tier 3)
+    3. PDFEvidenceProvider          — spec sheet PDFs (Tier 4-5)
+    4. DescriptionExtractionProvider— Doc-First from Part_Desc (Tier 2, universal)
 
-    For batch processing: GT seed is checked first (instant). Unknown MPNs
-    fall through to web scraping for real-time extraction.
+    Every row gets at least Tier-2 evidence from the description field.
+    Known GT rows get Tier-5 evidence instantly.
     """
     def __init__(self, enable_web=True):
         self.gt_seed = GroundTruthSeedProvider()
+        self.desc_extractor = DescriptionExtractionProvider()
         self.pdf = PDFEvidenceProvider()
         self.web = WebEvidenceProvider() if enable_web else None
         self.html_extractor = SpecBlockExtractor()
+        # Keep _row for desc extraction (set per-call via fetch_with_row)
+        self._current_row: dict = {}
 
-    def fetch(self, mfg_part_num: str) -> dict:
-        # 1. Try GT seed first — Tier-5 verified data (instant)
+    def fetch_with_row(self, mfg_part_num: str, row: dict) -> dict:
+        """Full fetch with row context for description extraction."""
+        # 1. GT seed — Tier-5 verified data (instant)
         primary = self.gt_seed.fetch(mfg_part_num)
         if primary:
             return primary
 
-        # 2. Try web scraping for real live data
+        # 2. Web scraping — real manufacturer page
         if self.web:
-            primary = self.web.fetch(mfg_part_num)
-            if primary:
-                return primary
+            web_result = self.web.fetch(mfg_part_num)
+            if web_result:
+                # Merge with desc extraction for extra fields
+                desc_result = self.desc_extractor.fetch_from_row(row)
+                if desc_result:
+                    # Web takes priority but desc fills gaps
+                    merged = dict(desc_result)
+                    merged.update(web_result)
+                    # Merge facts (desc fills what web missed)
+                    merged_facts = dict(desc_result.get("facts", {}))
+                    merged_facts.update(web_result.get("facts", {}))
+                    merged["facts"] = merged_facts
+                    return merged
+                return web_result
 
-        # 3. Try PDF provider
-        primary = self.pdf.fetch(mfg_part_num)
+        # 3. PDF provider
+        pdf_result = self.pdf.fetch(mfg_part_num)
+        if pdf_result:
+            return pdf_result
+
+        # 4. Description extraction — Tier-2, works for ALL rows
+        return self.desc_extractor.fetch_from_row(row)
+
+    def fetch(self, mfg_part_num: str) -> dict:
+        """Backwards-compatible fetch — uses cached row if available."""
+        if self._current_row:
+            return self.fetch_with_row(mfg_part_num, self._current_row)
+        # Last resort: GT seed or web only
+        primary = self.gt_seed.fetch(mfg_part_num)
         if primary:
             return primary
-
+        if self.web:
+            return self.web.fetch(mfg_part_num)
         return {}
 
 def load_input_rows():

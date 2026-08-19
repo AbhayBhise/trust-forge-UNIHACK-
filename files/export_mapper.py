@@ -100,20 +100,38 @@ def map_to_delivery_format(product, original_row, headers):
 
     # ── 1-50 Attribute Mapping ─────────────────────────────────────
     import config_appliances as cfg
-    for idx, attr_def in enumerate(cfg.ATTRIBUTES, start=1):
-        if idx > 50:
-            break
-        label = attr_def[0]
-        attr = product.get_attr(label)
-        mapped[f"ATTRIBUTE_LABEL {idx}"] = label
-        mapped[f"ATTRIBUTE_VALUE {idx}"] = str(attr.value) if attr and attr.value is not None else ""
-        mapped[f"ATTRIBUTE_UOM {idx}"] = attr.uom if attr and attr.uom else ""
 
-    # Clear any leftover attributes past our defined list
-    for i in range(len(cfg.ATTRIBUTES) + 1, 51):
-        mapped[f"ATTRIBUTE_LABEL {i}"] = ""
-        mapped[f"ATTRIBUTE_VALUE {i}"] = ""
-        mapped[f"ATTRIBUTE_UOM {i}"] = ""
+    # Check if this is an appliance (dishwasher) product
+    classpath = product.classpath or ""
+    is_appliance = "dishwasher" in classpath.lower() or "appliance" in classpath.lower()
+
+    if is_appliance:
+        # Use appliance-specific attribute config
+        for idx, attr_def in enumerate(cfg.ATTRIBUTES, start=1):
+            if idx > 50:
+                break
+            label = attr_def[0]
+            attr = product.get_attr(label)
+            mapped[f"ATTRIBUTE_LABEL {idx}"] = label
+            mapped[f"ATTRIBUTE_VALUE {idx}"] = str(attr.value) if attr and attr.value is not None else ""
+            mapped[f"ATTRIBUTE_UOM {idx}"] = attr.uom if attr and attr.uom else ""
+        # Clear remaining slots
+        for i in range(len(cfg.ATTRIBUTES) + 1, 51):
+            mapped[f"ATTRIBUTE_LABEL {i}"] = ""
+            mapped[f"ATTRIBUTE_VALUE {i}"] = ""
+            mapped[f"ATTRIBUTE_UOM {i}"] = ""
+    else:
+        # Generic: write all attributes that have values
+        filled_attrs = [a for a in product.attributes if a.value]
+        for idx, attr in enumerate(filled_attrs[:50], start=1):
+            mapped[f"ATTRIBUTE_LABEL {idx}"] = attr.attribute
+            mapped[f"ATTRIBUTE_VALUE {idx}"] = str(attr.value)
+            mapped[f"ATTRIBUTE_UOM {idx}"] = attr.uom or ""
+        # Clear remaining
+        for i in range(len(filled_attrs) + 1, 51):
+            mapped[f"ATTRIBUTE_LABEL {i}"] = ""
+            mapped[f"ATTRIBUTE_VALUE {i}"] = ""
+            mapped[f"ATTRIBUTE_UOM {i}"] = ""
 
     # ── Digital Asset filenames ────────────────────────────────────
     brand_clean = _strip_marks(product.brand_name or "").replace(" ", "_").upper()
