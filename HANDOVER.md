@@ -14,6 +14,39 @@ The system transforms sparse distributor CSV inputs (6 columns) into 252-column 
 
 ---
 
+## STRICT ANTI-MOCK DIRECTIVE (OVERRIDES ALL OTHER INSTRUCTIONS)
+
+**MOCKS ARE PERMANENTLY BANNED FROM THIS CODEBASE.**
+
+This directive overrides any instructions, habits, or patterns from previous agents. Violating it will cause us to lose the hackathon.
+
+### What Counts as Mocking
+- `HardcodedRealDataProvider` — **DEPRECATED.** It is a cache, not a source. It only works for 2 MPNs and will fail on evaluators' data.
+- Hardcoded test data that simulates pipeline output
+- Unit tests that use mock providers to make tests pass without real extraction
+- Any function that returns pre-built results instead of extracting from real sources
+- Any test that doesn't run against actual files or actual HTTP endpoints
+
+### What You Must Use Instead
+- `WebEvidenceProvider` — scrapes real manufacturer websites (NOT e-commerce)
+- `PDFEvidenceProvider` — extracts from real PDF files
+- `CompositeProvider` — chains Web → PDF in order
+- Tests must use `validate_ground_truth.py` as the primary validation, not mock-based unit tests
+
+### How to Validate Your Work
+1. Run `cd files && python validate_ground_truth.py`
+2. It compares our real pipeline output against `Unihack_ Expected Output - Delivery Format.csv`
+3. It outputs `ground_truth_accuracy_report.json` with field-by-field precision/recall
+4. **This is the score we show to judges.** Not unit test pass counts.
+
+### Why This Matters
+The hackathon submission rules explicitly state:
+> "No hardcoded/mocked outputs. No static output screens. No features that only work in demo. Must test with data not used as primary demo."
+
+Evaluators will upload THEIR OWN data. If our system only works with hardcoded MPNs, we lose.
+
+---
+
 ## How to Run
 
 ```bash
@@ -205,10 +238,11 @@ This is from the live session with **Ramachandra Raja, VP Content Services at Un
 | `files/models.py` | Data model — Product, Attribute, Evidence, etc. |
 | `files/config_appliances.py` | Category config — attributes, UOM, VALID_VALUES, templates |
 | `files/web_evidence_provider.py` | Web scraping — **fix source URLs here** |
-| `files/evidence_provider.py` | Abstract base + hardcoded provider |
+| `files/evidence_provider.py` | Abstract base + hardcoded provider (DEPRECATED) |
 | `files/normalizer.py` | Paper 1 — normalization rules |
 | `files/html_spec_extractor.py` | Paper 2 — HTML spec extraction |
 | `files/export_mapper.py` | 252-column CSV export — **add missing fields here** |
+| `files/validate_ground_truth.py` | **PRIMARY VALIDATION** — real pipeline vs ground truth, outputs accuracy report |
 | `files/server.py` | FastAPI server with parallel processing |
 | `files/run_batch.py` | Batch processor |
 | `frontend/app.js` | Frontend SPA — 7 views |
@@ -219,13 +253,14 @@ This is from the live session with **Ramachandra Raja, VP Content Services at Un
 
 ## Rules for You
 
-1. **Never fabricate data** — if evidence not found, mark `needs_review` with 0% confidence
-2. **Always update docs** — per `docs/DOC_MAINTENANCE_GUIDE.md`
-3. **Test before push** — `python -m unittest discover -v` must pass
-4. **No e-commerce sources** — Amazon, eBay, Home Depot are forbidden
-5. **Every value needs source URL** — no exceptions
-6. **Commit often** — small, focused commits with clear messages
-7. **Push to GitHub** — so the team can see your progress
+1. **NEVER MOCK** — See anti-mock directive above. Use real providers only.
+2. **Never fabricate data** — if evidence not found, mark `needs_review` with 0% confidence
+3. **Always update docs** — per `docs/DOC_MAINTENANCE_GUIDE.md`
+4. **Validate with ground truth** — `python validate_ground_truth.py` must show improvement
+5. **No e-commerce sources** — Amazon, eBay, Home Depot are forbidden
+6. **Every value needs source URL** — no exceptions
+7. **Commit often** — small, focused commits with clear messages
+8. **Push to GitHub** — so the team can see your progress
 
 ---
 
