@@ -54,8 +54,10 @@ def resolve_identity(row: dict, evidence_found: bool) -> Identity:
 
 
 def build_product(row: dict, provider: EvidenceProvider) -> Product:
-    mpn = row["Mfg_Part_Num"]
-    product = Product(mfg_part_num=mpn, part_desc=row["Part_Desc"])
+    mpn = row.get("Mfg_Part_Num", "")
+    if not mpn:
+        mpn = "UNKNOWN"
+    product = Product(mfg_part_num=mpn, part_desc=row.get("Part_Desc", ""))
 
     try:
         evidence_bundle = provider.fetch(mpn)
@@ -67,14 +69,15 @@ def build_product(row: dict, provider: EvidenceProvider) -> Product:
 
     product.identity = resolve_identity(row, evidence_found)
     if evidence_found:
-        product.manufacturer_name = evidence_bundle["_manufacturer_name"]
-        product.brand_name = evidence_bundle["_brand_name"]
+        product.manufacturer_name = evidence_bundle.get("_manufacturer_name", "")
+        product.brand_name = evidence_bundle.get("_brand_name", "")
 
     # Taxonomy classification: Try to use Classpath from input, else infer from Part_Desc
+    part_desc = row.get("Part_Desc", "").lower()
     if row.get("Classpath"):
         product.classpath = row["Classpath"]
         product.classpath_confidence = 1.0
-    elif "dishwasher" in row["Part_Desc"].lower():
+    elif "dishwasher" in part_desc:
         product.classpath = cfg.CLASSPATH
         product.classpath_confidence = 0.95
     else:

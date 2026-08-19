@@ -27,6 +27,7 @@ from pipeline import build_product
 from eval import CompositeProvider
 from models import Product, Identity
 from export_mapper import write_csv
+from column_detector import detect_columns, map_row, detect_and_report
 
 # ── Config ──────────────────────────────────────────────────────────
 MAX_ROWS_PER_BATCH = 10000  # No practical limit for production
@@ -50,7 +51,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-REQUIRED_SCHEMA = ["Mfg_Part_Num", "Part_Desc", "E1_Brand", "Unilog_Brand", "DIB_Brand", "Part_Manuf"]
+# No hardcoded schema - we auto-detect columns from any CSV format
 
 # ── Job Manager ─────────────────────────────────────────────────────
 class JobManager:
@@ -97,15 +98,21 @@ class JobManager:
 jobs = JobManager()
 
 # ── Processing ──────────────────────────────────────────────────────
-def process_row_safe(row: dict, provider: CompositeProvider) -> Product:
-    """Process a single row with timeout protection."""
+def process_row_safe(row: dict, provider: CompositeProvider, column_map: dict = None) -> Product:
+    """Process a single row with timeout protection. Uses column_map for flexible input."""
     try:
-        return build_product(row, provider)
+        # Map CSV columns to our internal schema if column_map provided
+        if column_map:
+            mapped_row = map_row(row, column_map)
+        else:
+            mapped_row = row
+        return build_product(mapped_row, provider)
     except Exception as e:
+        mpn = row.get("Mfg_Part_Num") or row.get("MPN") or row.get("Part_Number") or "UNKNOWN"
         p = Product()
-        p.mfg_part_num = row.get("Mfg_Part_Num", "UNKNOWN")
-        p.manufacturer_name = row.get("Part_Manuf", "UNKNOWN")
-        p.brand_name = row.get("E1_Brand", "UNKNOWN")
+        p.mfg_part_num = mpn
+        p.manufacturer_name = row.get("Part_Manuf") or row.get("Manufacturer") or "UNKNOWN"
+        p.brand_name = row.get("E1_Brand") or row.get("Brand") or "UNKNOWN"
         p.identity = Identity(status="needs_review", matched_on="error")
         p.quality_score = {
             "completeness": 0.0,
@@ -118,7 +125,7 @@ def process_row_safe(row: dict, provider: CompositeProvider) -> Product:
         return p
 
 
-def process_batch_background(job_id: str, rows: list, provider: CompositeProvider):
+def process_batch_background(job_id: str, rows: list, provider: CompositeProvider, column_map: dict = None):
     """Process rows in parallel with progress updates."""
     products = []
     verified = 0
@@ -126,7 +133,7 @@ def process_batch_background(job_id: str, rows: list, provider: CompositeProvide
     failed = 0
     
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-        futures = {executor.submit(process_row_safe, row, provider): row for row in rows}
+        futures = {executor.submit(process_row_safe, row, provider, column_map): row for row in rows}
         
         for i, future in enumerate(as_completed(futures)):
             try:
@@ -140,8 +147,10 @@ def process_batch_background(job_id: str, rows: list, provider: CompositeProvide
             except Exception:
                 failed += 1
                 row = futures[future]
+                # Try to extract MPN from any column name
+                mpn = row.get("Mfg_Part_Num") or row.get("MPN") or row.get("Part_Number") or "UNKNOWN"
                 p = Product()
-                p.mfg_part_num = row.get("Mfg_Part_Num", "UNKNOWN")
+                p.mfg_part_num = mpn
                 p.identity = Identity(status="needs_review", matched_on="error")
                 p.quality_score = {"completeness": 0.0, "validation_pass_rate": 0.0, "mean_confidence": 0.0, "evidence_coverage": 0.0}
                 p.attributes = []
@@ -195,9 +204,12 @@ async def process_pipeline(file: UploadFile = File(...)):
     if not reader.fieldnames:
         raise HTTPException(status_code=400, detail="Empty or invalid CSV file.")
     
-    missing_cols = [col for col in REQUIRED_SCHEMA if col not in reader.fieldnames]
-    if missing_cols:
-        raise HTTPException(status_code=400, detail=f"Invalid schema. Missing columns: {missing_cols}")
+    # Smart column detection - no hardcoded schema required
+    column_map, warnings = detect_and_report(reader.fieldnames)
+    
+    if not column_map.get("Mfg_Part_Num"):
+        raise HTTPException(status_code=400, 
+            detail="Could not detect a Part Number/MPN column. Please ensure your CSV has a column with part numbers.")
     
     rows = list(reader)
     if len(rows) == 0:
@@ -208,7 +220,7 @@ async def process_pipeline(file: UploadFile = File(...)):
     product_objs = []
     
     for row in rows:
-        p = process_row_safe(row, provider)
+        p = process_row_safe(row, provider, column_map)
         product_objs.append(p)
         results.append(p.to_dict())
     
@@ -221,7 +233,9 @@ async def process_pipeline(file: UploadFile = File(...)):
     
     return {
         "products": results,
-        "csv_url": f"/files/{export_filename}"
+        "csv_url": f"/files/{export_filename}",
+        "column_map": column_map,
+        "warnings": warnings,
     }
 
 
@@ -241,9 +255,12 @@ async def create_job(file: UploadFile = File(...)):
     if not reader.fieldnames:
         raise HTTPException(status_code=400, detail="Empty or invalid CSV file.")
     
-    missing_cols = [col for col in REQUIRED_SCHEMA if col not in reader.fieldnames]
-    if missing_cols:
-        raise HTTPException(status_code=400, detail=f"Invalid schema. Missing columns: {missing_cols}")
+    # Smart column detection - no hardcoded schema required
+    column_map, warnings = detect_and_report(reader.fieldnames)
+    
+    if not column_map.get("Mfg_Part_Num"):
+        raise HTTPException(status_code=400, 
+            detail="Could not detect a Part Number/MPN column. Please ensure your CSV has a column with part numbers.")
     
     rows = list(reader)
     if len(rows) == 0:
@@ -257,12 +274,18 @@ async def create_job(file: UploadFile = File(...)):
     
     thread = threading.Thread(
         target=process_batch_background,
-        args=(job_id, rows, provider),
+        args=(job_id, rows, provider, column_map),
         daemon=True
     )
     thread.start()
     
-    return {"job_id": job_id, "total_rows": len(rows), "status": "processing"}
+    return {
+        "job_id": job_id, 
+        "total_rows": len(rows), 
+        "status": "processing",
+        "column_map": column_map,
+        "warnings": warnings,
+    }
 
 
 @app.get("/pipeline/jobs/{job_id}")
