@@ -35,6 +35,11 @@ files/Antigravity-Build-Prompt.md
 *.xlsx
 *.xls
 
+# Exception: test CSV files for smart column detection
+!test_alternative_columns.csv
+!test_mpn_format.csv
+!test_part_number_format.csv
+
 # Archives
 *.zip
 *.tar.gz
