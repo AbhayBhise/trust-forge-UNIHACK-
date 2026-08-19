@@ -9,8 +9,13 @@ For each MPN, this provider:
 
 This replaces the hardcoded provider with live web retrieval.
 Every fact returned has a traceable URL source — Doc-First compliant.
+
+Caching: Results are persisted to web_evidence_cache.json between runs.
+Second time processing the same MPNs takes milliseconds, not seconds.
 """
 from __future__ import annotations
+import json
+import os
 import re
 import time
 import logging
@@ -26,6 +31,9 @@ from models import Evidence
 
 log = logging.getLogger(__name__)
 
+# ── Cache file ───────────────────────────────────────────────────────
+CACHE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web_evidence_cache.json")
+
 # ── Request settings ────────────────────────────────────────────────
 HEADERS = {
     "User-Agent": (
@@ -36,9 +44,9 @@ HEADERS = {
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     "Accept-Language": "en-US,en;q=0.9",
 }
-TIMEOUT = 6
-MAX_TIME_PER_MPN = 8.0  # seconds — don't spend more than this per MPN
-DELAY_BETWEEN_REQUESTS = 0.3  # seconds — be polite but fast
+TIMEOUT = 4
+MAX_TIME_PER_MPN = 5.0  # seconds — reduced from 8s for faster processing
+DELAY_BETWEEN_REQUESTS = 0.2  # seconds — reduced from 0.3s
 
 # ── Manufacturer search URLs ─────────────────────────────
 # Direct manufacturer search endpoints. E-commerce sites are forbidden.
@@ -160,8 +168,27 @@ class WebEvidenceProvider(EvidenceProvider):
         self.spec_extractor = SpecBlockExtractor()
         self.session = requests.Session()
         self.session.headers.update(HEADERS)
-        self._cache = {}  # mpn -> evidence bundle
+        self._cache = {}  # mpn -> evidence bundle (in-memory)
         self._last_request_time = 0.0
+        self._load_cache()
+
+    def _load_cache(self):
+        """Load persistent cache from disk (instant for repeat runs)."""
+        if os.path.exists(CACHE_FILE):
+            try:
+                with open(CACHE_FILE, "r", encoding="utf-8") as f:
+                    self._cache = json.load(f)
+                log.info(f"Loaded {len(self._cache)} cached MPNs from disk")
+            except Exception:
+                self._cache = {}
+
+    def _save_cache(self):
+        """Persist cache to disk (survives server restarts)."""
+        try:
+            with open(CACHE_FILE, "w", encoding="utf-8") as f:
+                json.dump(self._cache, f, ensure_ascii=False, indent=1)
+        except Exception:
+            pass
 
     def _throttle(self):
         """Rate-limit requests to be polite to servers."""
@@ -215,6 +242,7 @@ class WebEvidenceProvider(EvidenceProvider):
                 if bundle:
                     log.info(f"  {source_name}: extracted {len(bundle.get('facts', {}))} attributes")
                     self._cache[mfg_part_num] = bundle
+                    self._save_cache()  # Persist to disk for next run
                     return bundle
                 else:
                     log.debug(f"  {source_name}: no specs extracted")

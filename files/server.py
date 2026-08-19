@@ -30,8 +30,8 @@ from export_mapper import write_csv
 
 # ── Config ──────────────────────────────────────────────────────────
 MAX_ROWS_PER_BATCH = 10000  # No practical limit for production
-TIMEOUT_SECONDS = 10.0
-MAX_WORKERS = 8  # Parallel processing threads
+TIMEOUT_SECONDS = 8.0
+MAX_WORKERS = 24  # Increased from 8 for faster parallel processing
 PROGRESS_UPDATE_INTERVAL = 0.1  # seconds
 
 def get_headers():
