@@ -39,6 +39,7 @@ files/Antigravity-Build-Prompt.md
 !test_alternative_columns.csv
 !test_mpn_format.csv
 !test_part_number_format.csv
+!demo_dataset.csv
 
 # Archives
 *.zip
