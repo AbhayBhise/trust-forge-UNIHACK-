@@ -301,7 +301,7 @@ async def stream_job_progress(job_id: str):
         while True:
             job = jobs.get_job(job_id)
             if not job:
-                yield f"data: {{"error": 'Job not found'}}\n\n"
+                yield 'data: {"error": "Job not found"}\n\n'
                 break
             
             elapsed = time.time() - job["started_at"]
