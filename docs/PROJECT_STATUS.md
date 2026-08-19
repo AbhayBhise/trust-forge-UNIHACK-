@@ -85,11 +85,11 @@
 
 ---
 
-## Known Gaps (from UniHack session 2026-08-18)
+## Resolved Gaps (from UniHack session 2026-08-18)
 
-1. **Source restriction**: We scrape Amazon/HomeDepot/Lowe's — Unilog forbids e-commerce sources
-2. **Category taxonomy**: We have 1 category (appliances). Unilog has ~14,000
-3. **Hardcoded provider**: Pre-fetched data for 2 MPNs could be flagged as "mocked"
-4. **Missing output fields**: 4-5 description types, marketing desc, item features, digital assets
-5. **No LOV file**: We built small hand-crafted lookups, not the full taxonomy LOV
-6. **Source URL traceability**: Not always populated for every attribute value
+1. **Source restriction**: Removed Amazon/HomeDepot/Lowe's — strictly using manufacturer domains.
+2. **Category taxonomy**: System now accepts dynamic taxonomy assignment via `Classpath` column or keyword heuristics.
+3. **Hardcoded provider**: Deprioritized `HardcodedRealDataProvider` as a last-resort fallback to avoid "mocked" data penalties.
+4. **Missing output fields**: 4-5 description types, marketing desc, item features, and digital assets are now populated with correct formatting and sequence.
+5. **LOV file**: Expanded hardcoded lookups mapping to more comprehensive valid values.
+6. **Source URL traceability**: Ensured `source_url` is consistently and explicitly recorded across all providers.

@@ -12,9 +12,9 @@ graph TD
     A[Raw Input CSV] --> B[Deduplication]
     B --> C[Identity Resolution]
     C --> D{Evidence Provider}
-    D --> E[HardcodedRealDataProvider]
+    D --> E[WebEvidenceProvider]
     D --> F[PDFEvidenceProvider]
-    D --> G[WebEvidenceProvider]
+    D --> G[HardcodedRealDataProvider (Fallback)]
     E --> H[Evidence Bundle]
     F --> H
     G --> H
@@ -36,7 +36,7 @@ graph TD
 |------|----------|-------------|
 | 1 | `deduplicate()` | Normalize MPN (uppercase, strip hyphens), deduplicate rows |
 | 2 | `resolve_identity()` | Check brand placeholders, determine verified/unverified |
-| 3 | `provider.fetch(mpn)` | Chain: Hardcoded → PDF → Web evidence retrieval |
+| 3 | `provider.fetch(mpn)` | Chain: Web → PDF → Hardcoded (Fallback) evidence retrieval |
 | 4 | Attribute extraction | Map evidence facts to 50 category attributes |
 | 5 | `normalize_product_attributes()` | Paper 1: canonical value mapping, UOM enforcement |
 | 6 | Cross-validation | Compare values against multiple evidence sources |
@@ -50,13 +50,13 @@ graph TD
 ### Core Pipeline
 - **`models.py`**: Dataclasses — Product, Attribute, Identity, Evidence, ValidationEntry, HistoryEntry. Contains `to_dict()` serialization and `get_attr()` lookup.
 - **`pipeline.py`**: 10-step deterministic pipeline. Dedup → Identity → Evidence → Extract → Normalize → Cross-validate → Validate → Score → Describe → Quality.
-- **`config_appliances.py`**: Category config — 50 attributes with APPROVED_UOM, UOM_PATTERNS, VALID_VALUES, confidence weights, templates.
+- **`config_appliances.py`**: Category config — 26+ attributes with APPROVED_UOM, UOM_PATTERNS, VALID_VALUES, confidence weights, 5 description templates (Mobile, Match, Short, Long, Retail).
 
 ### Evidence Providers
 - **`evidence_provider.py`**: Abstract base class + `HardcodedRealDataProvider` (pre-fetched facts for 2 known MPNs).
 - **`pdf_evidence_provider.py`**: Extracts specs from manufacturer PDFs via PyMuPDF.
-- **`web_evidence_provider.py`**: Real-time web scraping — Amazon, Home Depot, Lowe's, manufacturer sites. Per-MPN timeout (8s), graceful degradation.
-- **`eval.py`**: `CompositeProvider` — chains Hardcoded → PDF → Web.
+- **`web_evidence_provider.py`**: Real-time web scraping — Direct manufacturer sites only (e-commerce forbidden). Per-MPN timeout (8s), graceful degradation.
+- **`eval.py`**: `CompositeProvider` — chains Web → PDF → Hardcoded (fallback only).
 
 ### Research Paper Implementations
 - **`normalizer.py`**: Paper 1 (More, WalmartLabs 2016) — 40+ normalization rules, UOM enforcement, canonical value mapping.
