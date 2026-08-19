@@ -147,8 +147,8 @@ function renderUpload() {
                 <div class="card-title">Process a CSV File</div>
             </div>
             <p style="color:var(--gray-500);font-size:0.875rem;margin-bottom:1.5rem">
-                Upload a CSV with columns: Mfg_Part_Num, Part_Desc, E1_Brand, Unilog_Brand, DIB_Brand, Part_Manuf.
-                Large datasets (1000+ rows) are processed in the background with parallel workers.
+                Upload any CSV with product data. The system auto-detects columns (MPN, manufacturer, brand, description)
+                regardless of naming. Large datasets (1000+ rows) are processed in the background with parallel workers.
             </p>
             <div id="upload-zone" class="upload-zone" onclick="document.getElementById('csv-file').click()"
                  ondragover="event.preventDefault();this.classList.add('dragover')"
@@ -156,9 +156,11 @@ function renderUpload() {
                  ondrop="event.preventDefault();this.classList.remove('dragover');handleFileDrop(event)">
                 <div class="upload-icon">&#8682;</div>
                 <div class="upload-title">Drop CSV here or click to browse</div>
-                <div class="upload-desc">Supports 1 to 10,000 rows &middot; Parallel processing with progress tracking</div>
+                <div class="upload-desc">Supports 1 to 10,000 rows &middot; Auto-detects column names &middot; Parallel processing</div>
             </div>
             <input type="file" id="csv-file" accept=".csv" style="display:none" onchange="handleFileSelect(this)">
+
+            <div id="column-detection" style="display:none;margin-top:1rem"></div>
 
             <div id="upload-loading" style="display:none">
                 <div class="loading-overlay">
@@ -202,8 +204,35 @@ async function uploadCSV(file) {
             const err = await res.json();
             throw new Error(err.detail || 'Upload failed');
         }
-        const { job_id } = await res.json();
+        const { job_id, column_map, warnings, total_rows } = await res.json();
         currentJobId = job_id;
+        
+        // Show column detection results
+        const detectionEl = document.getElementById('column-detection');
+        if (detectionEl && column_map) {
+            const detected = Object.entries(column_map)
+                .filter(([k, v]) => v !== null)
+                .map(([k, v]) => `<span class="badge badge-detected">${k}: ${v}</span>`)
+                .join(' ');
+            const missing = Object.entries(column_map)
+                .filter(([k, v]) => v === null)
+                .map(([k]) => k)
+                .join(', ');
+            
+            let html = `<div class="detection-results">
+                <div class="detection-title">Column Detection</div>
+                <div class="detected-columns">${detected}</div>`;
+            if (missing) {
+                html += `<div class="missing-columns">Not detected: ${missing}</div>`;
+            }
+            if (warnings && warnings.length) {
+                html += `<div class="warnings">${warnings.map(w => `<div>${w}</div>`).join('')}</div>`;
+            }
+            html += `<div class="total-rows">Processing ${total_rows} rows...</div></div>`;
+            detectionEl.innerHTML = html;
+            detectionEl.style.display = 'block';
+        }
+        
         pollJobProgress(job_id);
     } catch (err) {
         document.getElementById('upload-loading').style.display = 'none';
