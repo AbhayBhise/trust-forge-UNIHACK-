@@ -106,13 +106,15 @@ def process_row_safe(row: dict, provider: CompositeProvider, column_map: dict = 
             mapped_row = map_row(row, column_map)
         else:
             mapped_row = row
+        # Pass full mapped_row so fetch_with_row() gets Part_Desc, E1_Brand,
+        # Part_Manuf context needed by DescriptionExtractionProvider
         return build_product(mapped_row, provider)
     except Exception as e:
         mpn = row.get("Mfg_Part_Num") or row.get("MPN") or row.get("Part_Number") or "UNKNOWN"
-        p = Product()
-        p.mfg_part_num = mpn
-        p.manufacturer_name = row.get("Part_Manuf") or row.get("Manufacturer") or "UNKNOWN"
-        p.brand_name = row.get("E1_Brand") or row.get("Brand") or "UNKNOWN"
+        # Try to get brand/manufacturer directly from the row for graceful degradation
+        p = Product(mfg_part_num=mpn)
+        p.manufacturer_name = row.get("Part_Manuf") or row.get("Manufacturer") or ""
+        p.brand_name = row.get("E1_Brand") or row.get("Brand") or ""
         p.identity = Identity(status="needs_review", matched_on="error")
         p.quality_score = {
             "completeness": 0.0,
@@ -123,6 +125,7 @@ def process_row_safe(row: dict, provider: CompositeProvider, column_map: dict = 
         p.attributes = []
         p.descriptions = {}
         return p
+
 
 
 def process_batch_background(job_id: str, rows: list, provider: CompositeProvider, column_map: dict = None):
