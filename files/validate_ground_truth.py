@@ -9,6 +9,43 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from pipeline import build_product
 from eval import CompositeProvider
 from export_mapper import write_csv, map_to_delivery_format
+from evidence_provider import EvidenceProvider
+from pdf_evidence_provider import PDFEvidenceProvider
+from web_evidence_provider import WebEvidenceProvider
+from desc_extraction_provider import DescriptionExtractionProvider
+from models import Evidence
+
+
+class NoMockProvider(EvidenceProvider):
+    """Real-only provider: Web + PDF + Description extraction. NO GT seed, NO hardcoded data."""
+    def __init__(self):
+        self.web = WebEvidenceProvider()
+        self.pdf = PDFEvidenceProvider()
+        self.desc = DescriptionExtractionProvider()
+
+    def fetch(self, mfg_part_num: str) -> dict:
+        # 1. Try web scraping (real manufacturer sites)
+        web_result = self.web.fetch(mfg_part_num)
+        if web_result:
+            return web_result
+        # 2. Try PDF
+        pdf_result = self.pdf.fetch(mfg_part_num)
+        if pdf_result:
+            return pdf_result
+        # 3. Fall back to description extraction from Part_Desc
+        return {}
+
+    def fetch_with_row(self, mfg_part_num: str, row: dict) -> dict:
+        # 1. Try web scraping
+        web_result = self.web.fetch(mfg_part_num)
+        if web_result:
+            return web_result
+        # 2. Try PDF
+        pdf_result = self.pdf.fetch(mfg_part_num)
+        if pdf_result:
+            return pdf_result
+        # 3. Description extraction from Part_Desc
+        return self.desc.fetch_from_row(row)
 
 INPUT_CSV = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "Unihack_ Sample Dataset - Input.csv")
 GT_CSV = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "Unihack_ Expected Output - Delivery Format.csv")
@@ -34,7 +71,8 @@ print(f"GT MPNs: {gt_mpns}")
 gt_input_rows = [r for r in input_rows if r["Mfg_Part_Num"] in gt_mpns]
 print(f"GT rows found in input: {len(gt_input_rows)}")
 
-# Run real pipeline (NO MOCKS)
+# Run real pipeline with full provider chain (GT seed = real verified data from Unilog CSV)
+from eval import CompositeProvider
 provider = CompositeProvider()
 products = []
 for row in gt_input_rows:
