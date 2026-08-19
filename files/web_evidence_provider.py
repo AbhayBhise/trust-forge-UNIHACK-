@@ -40,14 +40,9 @@ TIMEOUT = 6
 MAX_TIME_PER_MPN = 8.0  # seconds — don't spend more than this per MPN
 DELAY_BETWEEN_REQUESTS = 0.3  # seconds — be polite but fast
 
-# ── Manufacturer / retailer search URLs ─────────────────────────────
-# Retailer search pages with structured spec tables work best.
-# Direct manufacturer search endpoints are second priority.
+# ── Manufacturer search URLs ─────────────────────────────
+# Direct manufacturer search endpoints. E-commerce sites are forbidden.
 SEARCH_SOURCES = [
-    # Retailer search (fast, structured data)
-    ("amazon", "https://www.amazon.com/s?k={mpn}"),
-    ("homedepot", "https://www.homedepot.com/s/{mpn}"),
-    ("lowes", "https://www.lowes.com/search?searchTerm={mpn}"),
     # Direct manufacturer search
     ("frigidaire", "https://www.frigidaire.com/search?query={mpn}"),
     ("whirlpool", "https://www.whirlpool.com/search.html?query={mpn}"),

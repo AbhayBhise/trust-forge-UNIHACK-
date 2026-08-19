@@ -38,12 +38,20 @@ class CompositeProvider(EvidenceProvider):
         self._DATA = self.hardcoded._DATA  # For known_mpns filtering
         
     def fetch(self, mfg_part_num: str) -> dict:
-        # 1. Try hardcoded first (instant, reliable for known MPNs)
+        # 1. Try web scraping first for real live data (Gap 4 fix)
+        if self.web:
+            primary = self.web.fetch(mfg_part_num)
+            if primary:
+                return primary
+
+        # 2. Try PDF provider
+        primary = self.pdf.fetch(mfg_part_num)
+        if primary:
+            return primary
+
+        # 3. Fallback to hardcoded for known MPNs
         if mfg_part_num in self._DATA:
-            if mfg_part_num == "WDTS7024RZ":
-                primary = self.pdf.fetch(mfg_part_num)
-            else:
-                primary = self.hardcoded.fetch(mfg_part_num)
+            primary = self.hardcoded.fetch(mfg_part_num)
             
             # Cross-validation for known MPNs
             if primary:
@@ -55,12 +63,6 @@ class CompositeProvider(EvidenceProvider):
                 if cross_val:
                     primary["cross_validation"] = cross_val
             return primary
-
-        # 2. Fallback to web scraping for unknown MPNs
-        if self.web:
-            primary = self.web.fetch(mfg_part_num)
-            if primary:
-                return primary
 
         return {}
 
