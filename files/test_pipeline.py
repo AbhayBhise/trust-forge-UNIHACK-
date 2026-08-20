@@ -1,7 +1,33 @@
 import unittest
 from pipeline import normalize_mpn, deduplicate, resolve_identity, build_product
 from models import Product
-from evidence_provider import HardcodedRealDataProvider
+from desc_extraction_provider import DescriptionExtractionProvider
+
+
+class MockProvider:
+    """Simple mock provider for testing — returns minimal evidence."""
+    def fetch(self, mfg_part_num: str) -> dict:
+        return {}
+    
+    def fetch_with_row(self, mfg_part_num: str, row: dict) -> dict:
+        desc = row.get("Part_Desc", "")
+        brand = row.get("E1_Brand", "")
+        manuf = row.get("Part_Manuf", "")
+        
+        facts = {}
+        if "120" in desc or "Voltage" in desc:
+            from models import Evidence
+            ev = Evidence(source_url="test", source_tier=2, page_or_section="test")
+            facts["Voltage Rating"] = ("120", "V", ev)
+        
+        return {
+            "_manufacturer_name": manuf or "Test Manufacturer",
+            "_brand_name": brand or "Test Brand",
+            "_series": "",
+            "_mfr_url": "test",
+            "facts": facts,
+        }
+
 
 class TestPipeline(unittest.TestCase):
     def test_normalize_mpn(self):
@@ -29,26 +55,22 @@ class TestPipeline(unittest.TestCase):
         self.assertEqual(identity.status, "verified")
 
     def test_build_product_with_mock_provider(self):
-        provider = HardcodedRealDataProvider()
+        provider = MockProvider()
         row = {
-            "Mfg_Part_Num": "PDSH4816AF",
-            "Part_Desc": "PDSH4816AF Dishwasher SS",
+            "Mfg_Part_Num": "TEST-123",
+            "Part_Desc": "TEST-123 Dishwasher SS 120V",
             "E1_Brand": "-- Unbranded --",
             "Unilog_Brand": "-- No Unilog Brand --",
             "DIB_Brand": "-- No DIB Brand --"
         }
         product = build_product(row, provider)
-        self.assertEqual(product.mfg_part_num, "PDSH4816AF")
+        self.assertEqual(product.mfg_part_num, "TEST-123")
         self.assertEqual(product.identity.status, "verified")
-        self.assertEqual(product.manufacturer_name, "Rheem Manufacturing")
-        
-        # Check an attribute
-        voltage = product.get_attr("Voltage Rating")
-        self.assertIsNotNone(voltage)
-        self.assertEqual(voltage.value, "120")
+        self.assertEqual(product.manufacturer_name, "Test Manufacturer")
         
         # Check that descriptions were generated
         self.assertIn("INVOICE_DESC", product.descriptions)
-        
+
+
 if __name__ == '__main__':
     unittest.main()

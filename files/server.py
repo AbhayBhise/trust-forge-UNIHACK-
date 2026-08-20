@@ -76,6 +76,7 @@ class JobManager:
                 "csv_url": None,
                 "error": None,
                 "started_at": time.time(),
+                "activity": [],
             }
         return job_id
     
@@ -145,8 +146,16 @@ def process_batch_background(job_id: str, rows: list, provider: CompositeProvide
                 
                 if product.identity.status == "verified":
                     verified += 1
+                    act_msg = f"Verified {product.mfg_part_num} ({product.brand_name}) - Conf: {int(product.quality_score['mean_confidence']*100)}%"
                 else:
                     needs_review += 1
+                    act_msg = f"Review needed for {product.mfg_part_num} - Conf: {int(product.quality_score['mean_confidence']*100)}%"
+                
+                with jobs.lock:
+                    if job_id in jobs.jobs:
+                        jobs.jobs[job_id]["activity"].append(act_msg)
+                        if len(jobs.jobs[job_id]["activity"]) > 5:
+                            jobs.jobs[job_id]["activity"].pop(0)
             except Exception:
                 failed += 1
                 row = futures[future]
@@ -156,18 +165,22 @@ def process_batch_background(job_id: str, rows: list, provider: CompositeProvide
                 p.mfg_part_num = mpn
                 p.identity = Identity(status="needs_review", matched_on="error")
                 p.quality_score = {"completeness": 0.0, "validation_pass_rate": 0.0, "mean_confidence": 0.0, "evidence_coverage": 0.0}
-                p.attributes = []
                 p.descriptions = {}
                 products.append(p)
+                
+                with jobs.lock:
+                    if job_id in jobs.jobs:
+                        jobs.jobs[job_id]["activity"].append(f"Failed extracting {mpn}")
+                        if len(jobs.jobs[job_id]["activity"]) > 5:
+                            jobs.jobs[job_id]["activity"].pop(0)
             
-            # Update progress every N rows
-            if (i + 1) % max(1, len(rows) // 20) == 0 or i == len(rows) - 1:
-                jobs.update_progress(job_id,
-                    completed=i + 1,
-                    verified=verified,
-                    needs_review=needs_review,
-                    failed=failed,
-                )
+            # Update progress on every row for smooth UI
+            jobs.update_progress(job_id,
+                completed=i + 1,
+                verified=verified,
+                needs_review=needs_review,
+                failed=failed,
+            )
     
     # Export CSV
     files_dir = os.path.dirname(os.path.abspath(__file__))
@@ -315,6 +328,7 @@ async def get_job_status(job_id: str):
             "rate_per_sec": round(rate, 1),
             "eta_seconds": round(eta, 1),
         },
+        "activity": job.get("activity", []),
         "csv_url": job["csv_url"],
         "products": job["products"] if job["status"] == "completed" else None,
     }

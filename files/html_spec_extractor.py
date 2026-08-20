@@ -96,6 +96,29 @@ class SpecBlockExtractor:
                 r"<b[^>]*>\s*(.+?)\s*</b>\s*[:\-]?\s*(.+?)(?:<|$)",
                 re.IGNORECASE | re.DOTALL,
             ),
+            # Pattern: <li><strong>Attribute</strong>: Value</li> (common in spec lists)
+            re.compile(
+                r"<li[^>]*>\s*<(?:strong|b)[^>]*>\s*(.+?)\s*</(?:strong|b)>\s*[:\-]?\s*(.+?)\s*</li>",
+                re.IGNORECASE | re.DOTALL,
+            ),
+            # Pattern: <div class="spec-label">Attribute</div><div class="spec-value">Value</div>
+            re.compile(
+                r'<div[^>]*class="[^"]*label[^"]*"[^>]*>\s*(.+?)\s*</div>\s*'
+                r'<div[^>]*class="[^"]*value[^"]*"[^>]*>\s*(.+?)\s*</div>',
+                re.IGNORECASE | re.DOTALL,
+            ),
+            # Pattern: <td class="spec-name">Attribute</td><td class="spec-data">Value</td>
+            re.compile(
+                r'<td[^>]*class="[^"]*(?:name|label|header)[^"]*"[^>]*>\s*(.+?)\s*</td>\s*'
+                r'<td[^>]*class="[^"]*(?:data|value|detail)[^"]*"[^>]*>\s*(.+?)\s*</td>',
+                re.IGNORECASE | re.DOTALL,
+            ),
+            # Pattern: data-label="Attribute" > Value (responsive tables)
+            re.compile(
+                r'data-(?:label|attribute)[^>]*>\s*(.+?)\s*</(?:th|td|div|span)>\s*'
+                r'<(?:td|div|span)[^>]*>\s*(.+?)\s*</(?:td|div|span)>',
+                re.IGNORECASE | re.DOTALL,
+            ),
         ]
         return patterns
 
@@ -181,9 +204,9 @@ class SpecBlockExtractor:
                     attr_label = self._normalize_attr_name(attr)
                     if attr_label:
                         ev = Evidence(
-                            source_url="html_page",
-                            source_tier=3,
-                            page_or_section="specification block",
+                            source_url="html_parse",
+                            source_tier=5,
+                            page_or_section="spec table"
                         )
                         extracted[attr_label] = (val, uom, ev)
 
@@ -228,7 +251,19 @@ class SpecBlockExtractor:
                     # Skip if empty or too long (likely not a spec pair)
                     if not raw_attr or not raw_val:
                         continue
-                    if len(raw_attr) > 60 or len(raw_val) > 200:
+                    if len(raw_attr) > 80 or len(raw_val) > 300:
+                        continue
+
+                    # Skip navigation/menu items (not specs)
+                    skip_words = ["home", "contact", "about", "login", "sign up",
+                                  "cart", "menu", "search", "subscribe", "newsletter",
+                                  "copyright", "terms", "privacy", "policy"]
+                    attr_lower = raw_attr.lower()
+                    if any(sw in attr_lower for sw in skip_words):
+                        continue
+
+                    # Skip if value looks like a URL or email
+                    if raw_val.startswith("http") or "@" in raw_val:
                         continue
 
                     # Skip if it's a duplicate
@@ -248,50 +283,84 @@ class SpecBlockExtractor:
         """
         Map raw HTML attribute names to our canonical attribute labels.
         Returns None if the attribute is not in our schema.
+        Comprehensive mapping covering appliances, tools, plumbing, electrical.
         """
         lower = raw_name.lower().strip()
 
         # Direct mapping to canonical labels
         mapping = {
-            "voltage": "Voltage Rating",
-            "voltage rating": "Voltage Rating",
-            "amperage": "Amperage Rating",
-            "amperage rating": "Amperage Rating",
-            "amps": "Amperage Rating",
-            "amp rating": "Amperage Rating",
-            "sound level": "Sound Level",
-            "decibel level": "Sound Level",
-            "noise level": "Sound Level",
-            "db": "Sound Level",
-            "dba": "Sound Level",
-            "material": "Material",
-            "tub material": "Material",
-            "finish": "Material",
-            "mounting": "Mounting Type",
-            "mounting type": "Mounting Type",
-            "install type": "Mounting Type",
-            "size": "Size",
-            "dimensions": "Size",
-            "product size": "Size",
-            "height": "Minimum Height",
-            "width": "Size",
-            "depth": "Depth With Door Open",
-            "depth with door open": "Depth With Door Open",
-            "wash cycles": "Number of Wash Cycles",
-            "number of wash cycles": "Number of Wash Cycles",
-            "cycles": "Number of Wash Cycles",
-            "cycle count": "Number of Wash Cycles",
-            "series": "Series",
-            "product series": "Series",
-            "model": "Model",
-            "model number": "Model",
-            "mfg part num": "Model",
-            "color": "Color",
-            "colour": "Color",
-            "plug type": "Plug Type",
-            "power cord": "Plug Type",
+            # Electrical
+            "voltage": "Voltage Rating", "voltage rating": "Voltage Rating",
+            "voltage (v)": "Voltage Rating",
+            "amperage": "Amperage Rating", "amperage rating": "Amperage Rating",
+            "amps": "Amperage Rating", "amp rating": "Amperage Rating",
+            "amperage (a)": "Amperage Rating", "current": "Amperage Rating",
+            # Sound
+            "sound level": "Sound Level", "decibel level": "Sound Level",
+            "noise level": "Sound Level", "db": "Sound Level", "dba": "Sound Level",
+            "noise": "Sound Level", "sound": "Sound Level",
+            # Material
+            "material": "Material", "tub material": "Material",
+            "finish": "Material", "drum material": "Material",
+            "interior material": "Material", "body material": "Material",
+            # Mounting
+            "mounting": "Mounting Type", "mounting type": "Mounting Type",
+            "install type": "Mounting Type", "installation type": "Mounting Type",
+            "mount": "Mounting Type", "setup": "Mounting Type",
+            # Dimensions
+            "size": "Size", "dimensions": "Size", "product dimensions": "Size",
+            "product size": "Size", "overall dimensions": "Size",
+            "height": "Minimum Height", "min height": "Minimum Height",
+            "minimum height": "Minimum Height", "product height": "Minimum Height",
+            "max height": "Maximum Height", "maximum height": "Maximum Height",
+            "adjustable height": "Maximum Height",
+            "width": "Size", "product width": "Size",
+            "depth": "Depth With Door Open", "depth with door open": "Depth With Door Open",
+            "depth (door open)": "Depth With Door Open",
+            # Cycles
+            "wash cycles": "Number of Wash Cycles", "number of wash cycles": "Number of Wash Cycles",
+            "cycles": "Number of Wash Cycles", "cycle count": "Number of Wash Cycles",
+            "number of cycles": "Number of Wash Cycles",
+            # Series
+            "series": "Series", "product series": "Series", "product line": "Series",
+            # Model
+            "model": "Model", "model number": "Model", "model name": "Model",
+            "mfg part num": "Model", "product model": "Model",
+            # Color
+            "color": "Color", "colour": "Color", "finish color": "Color",
+            "exterior color": "Color",
+            # Power
+            "plug type": "Plug Type", "power cord": "Plug Type", "plug": "Plug Type",
+            "wattage": "Wattage", "power": "Wattage", "watts": "Wattage",
+            # Weight
+            "weight": "Weight", "product weight": "Weight", "net weight": "Weight",
+            # Energy
+            "energy star": "Energy Star", "energy rating": "Energy Star",
+            "energy use": "Additional Information", "energy consumption": "Additional Information",
+            # Flow (faucets)
+            "flow rate": "Flow Rate", "water flow": "Flow Rate",
+            # Handles (faucets)
+            "handles": "Number of Handles", "number of handles": "Number of Handles",
+            "handle type": "Handle Type",
+            # Fittings
+            "fitting type": "Fitting Type", "type": "Fitting Type",
+            "connection type": "Connection Type 1", "pipe size": "Pipe Size",
+            "schedule": "Schedule", "max pressure": "Maximum Pressure",
+            "maximum pressure": "Maximum Pressure",
+            # Warranty
+            "warranty": "Warranty", "warranty information": "Warranty",
+            # UPC/EAN
+            "ean": "EAN/UPC", "upc": "EAN/UPC", "gtin": "EAN/UPC",
+            "ean/upc": "EAN/UPC", "barcode": "EAN/UPC",
+            # Additional
             "additional information": "Additional Information",
-            "features": "Additional Information",
+            "features": "Additional Information", "feature": "Additional Information",
+            "description": "Additional Information",
+            # Faucet specific
+            "faucet type": "Faucet Type", "spout type": "Spout Type",
+            "spout reach": "Spout Reach", "spout height": "Spout Height",
+            "valve type": "Valve Type", "connection size": "Connection Size",
+            "ada compliant": "ADA Compliant",
         }
 
         return mapping.get(lower)
@@ -299,12 +368,22 @@ class SpecBlockExtractor:
     def _detect_uom(self, value: str) -> Optional[str]:
         """Detect unit of measurement from a value string."""
         value_lower = value.lower()
-        if re.search(r"\b\d+\s*v\b", value_lower):
+        if re.search(r"\b\d+\s*v\b", value_lower) or "volt" in value_lower:
             return "V"
-        if re.search(r"\b\d+\s*a\b", value_lower):
+        if re.search(r"\b\d+\s*a\b", value_lower) or "amp" in value_lower:
             return "A"
         if re.search(r"\b\d+\s*dBA\b", value_lower) or re.search(r"\b\d+\s*db\b", value_lower):
             return "dBA"
         if re.search(r"\bin\b", value_lower) or re.search(r"inch", value_lower):
             return "in"
+        if re.search(r"\b\d+\s*w\b", value_lower) or "watt" in value_lower:
+            return "W"
+        if re.search(r"\b\d+\s*lb", value_lower) or "pound" in value_lower:
+            return "lb"
+        if re.search(r"\b\d+\s*gpm\b", value_lower) or "gallon" in value_lower:
+            return "gpm"
+        if re.search(r"\b\d+\s*psi\b", value_lower):
+            return "psi"
+        if re.search(r"\b\d+\s*ft\b", value_lower) or "feet" in value_lower:
+            return "ft"
         return None

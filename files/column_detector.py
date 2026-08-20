@@ -26,6 +26,7 @@ INTERNAL_FIELDS = {
 }
 
 # Patterns that match each field (ordered by specificity)
+# Expanded to handle many more CSV format variations
 FIELD_PATTERNS = {
     "mpn": [
         r"mpn", r"mfg.?part.?num", r"manufacturer.?part.?num", r"part.?num",
@@ -33,21 +34,28 @@ FIELD_PATTERNS = {
         r"part.?number", r"mfr.?part", r"catalog.?num", r"sku.?num",
         r"product.?code", r"item.?code", r"part.?code", r"model$",
         r"mfg.?part", r"mfr.?num", r"mfr.?number",
+        r"part.?id", r"product.?id", r"item.?id", r"article.?num",
+        r"material.?num", r"material.?number", r"model.?code",
+        r"pn$", r"p/?n$", r"m/?p/?n$",
     ],
     "manufacturer": [
         r"manufacturer", r"mfr", r"mfr.?name", r"mfg.?name", r"vendor",
         r"supplier", r"brand.?owner", r"company", r"maker",
         r"part.?manuf", r"mfg.?company", r"mfr.?company",
+        r"mfr.?name", r"mfg.?name", r"manufacturer.?name",
+        r"vendor.?name", r"supplier.?name",
     ],
     "brand": [
         r"^brand$", r"brand.?name", r"e1.?brand", r"dib.?brand",
         r"unilog.?brand", r"product.?brand", r"item.?brand",
         r"brand.?code", r"manufacturer.?brand",
+        r"^b/?r.?name$", r"^mfr.?brand$",
     ],
     "description": [
         r"desc", r"description", r"part.?desc", r"product.?desc",
         r"item.?desc", r"short.?desc", r"product.?name", r"item.?name",
         r"part.?name", r"product.?description", r"item.?description",
+        r"name.?desc", r"long.?desc", r"full.?desc",
     ],
     "unilog_brand": [
         r"unilog.?brand", r"unilog.?name",
@@ -57,62 +65,74 @@ FIELD_PATTERNS = {
     ],
     "classpath": [
         r"classpath", r"class.?path", r"category", r"taxonomy",
-        r"class", r"fine", r"dept",
+        r"class", r"fine", r"dept", r"hierarchy", r"product.?type",
     ],
     "sku": [
         r"^sku$", r"sku.?num", r"sku.?number", r"stock.?num",
-        r"our.?sku", r"customer.?sku",
+        r"our.?sku", r"customer.?sku", r"internal.?sku",
     ],
 }
 
 # Alias normalization for known column names
+# Expanded to handle many more CSV format variations
 EXACT_ALIASES = {
-    "mfg_part_num": "mpn",
-    "mfg part num": "mpn",
-    "manufacturer part number": "mpn",
-    "part_number": "mpn",
-    "part number": "mpn",
-    "model_number": "mpn",
-    "model number": "mpn",
-    "mpn": "mpn",
-    "part_manuf": "manufacturer",
-    "part manuf": "manufacturer",
-    "part manufacturer": "manufacturer",
-    "manufacturer": "manufacturer",
-    "manufacturer_name": "manufacturer",
-    "manufacturer name": "manufacturer",
-    "mfr": "manufacturer",
-    "mfr_name": "manufacturer",
-    "mfg": "manufacturer",
-    "vendor": "manufacturer",
-    "supplier": "manufacturer",
-    "e1_brand": "brand",
-    "e1 brand": "brand",
-    "unilog_brand": "unilog_brand",
-    "unilog brand": "unilog_brand",
-    "dib_brand": "dib_brand",
-    "dib brand": "dib_brand",
-    "brand": "brand",
-    "brand_name": "brand",
-    "brand name": "brand",
-    "part_desc": "description",
-    "part desc": "description",
-    "description": "description",
-    "product_description": "description",
-    "product description": "description",
-    "item_description": "description",
-    "item description": "description",
-    "short_description": "description",
-    "short description": "description",
-    "classpath": "classpath",
-    "class": "classpath",
-    "category": "classpath",
-    "taxonomy": "classpath",
-    "dept": "classpath",
-    "fine": "classpath",
-    "sku": "sku",
-    "sku_number": "sku",
-    "sku number": "sku",
+    # MPN variations
+    "mfg_part_num": "mpn", "mfg part num": "mpn",
+    "manufacturer part number": "mpn", "part_number": "mpn",
+    "part number": "mpn", "model_number": "mpn", "model number": "mpn",
+    "mpn": "mpn", "mfgpartnum": "mpn", "mfgpartnum": "mpn",
+    "manufacturerpartnumber": "mpn", "partnumber": "mpn",
+    "partnum": "mpn", "modelnumber": "mpn", "modelnum": "mpn",
+    "part_no": "mpn", "part no": "mpn", "partno": "mpn",
+    "model_no": "mpn", "model no": "mpn", "modelno": "mpn",
+    "mfg_part_no": "mpn", "mfg part no": "mpn",
+    "mfr_part_num": "mpn", "mfr part num": "mpn",
+    "mfr_part_number": "mpn", "mfr part number": "mpn",
+    "catalog_num": "mpn", "catalog num": "mpn", "catalognum": "mpn",
+    "product_number": "mpn", "product number": "mpn", "productnumber": "mpn",
+    "item_number": "mpn", "item number": "mpn", "itemnumber": "mpn",
+    "material_number": "mpn", "material number": "mpn", "materialnumber": "mpn",
+    "article_number": "mpn", "article number": "mpn",
+    # Manufacturer variations
+    "part_manuf": "manufacturer", "part manuf": "manufacturer",
+    "part manufacturer": "manufacturer", "manufacturer": "manufacturer",
+    "manufacturer_name": "manufacturer", "manufacturer name": "manufacturer",
+    "mfr": "manufacturer", "mfr_name": "manufacturer",
+    "mfg": "manufacturer", "vendor": "manufacturer", "supplier": "manufacturer",
+    "mfrname": "manufacturer", "mfgname": "manufacturer",
+    "manufacturername": "manufacturer", "vendorname": "manufacturer",
+    "suppliername": "manufacturer", "brandowner": "manufacturer",
+    "company": "manufacturer", "maker": "manufacturer",
+    "partmanuf": "manufacturer", "mfgcompany": "manufacturer",
+    "mfrcompany": "manufacturer",
+    # Brand variations
+    "e1_brand": "brand", "e1 brand": "brand",
+    "unilog_brand": "unilog_brand", "unilog brand": "unilog_brand",
+    "dib_brand": "dib_brand", "dib brand": "dib_brand",
+    "brand": "brand", "brand_name": "brand", "brand name": "brand",
+    "brandname": "brand", "brandcode": "brand",
+    "manufacturerbrand": "brand", "productbrand": "brand",
+    "itembrand": "brand",
+    # Description variations
+    "part_desc": "description", "part desc": "description",
+    "description": "description", "product_description": "description",
+    "product description": "description", "item_description": "description",
+    "item description": "description", "short_description": "description",
+    "short description": "description", "namedescription": "description",
+    "longdescription": "description", "fulldescription": "description",
+    "productname": "description", "itemname": "description",
+    "partname": "description",
+    # Classpath variations
+    "classpath": "classpath", "class": "classpath", "category": "classpath",
+    "taxonomy": "classpath", "dept": "classpath", "fine": "classpath",
+    "classpath": "classpath", "classpath": "classpath",
+    "hierarchy": "classpath", "producttype": "classpath",
+    "product type": "classpath",
+    # SKU variations
+    "sku": "sku", "sku_number": "sku", "sku number": "sku",
+    "skunumber": "sku", "skunum": "sku", "stocknum": "sku",
+    "stock number": "sku", "oursku": "sku", "our sku": "sku",
+    "customersku": "sku", "customer sku": "sku",
 }
 
 
@@ -146,6 +166,12 @@ def detect_columns(headers: list[str]) -> dict[str, str | None]:
     
     Returns dict mapping internal field name to CSV column name.
     Example: {"mpn": "Mfg_Part_Num", "manufacturer": "Part_Manuf", ...}
+    
+    Handles:
+    - Exact alias matching (highest confidence)
+    - Pattern matching for unmatched columns
+    - Fuzzy matching for remaining unmatched columns
+    - Deduplication: each CSV column maps to at most one internal field
     """
     detected = {field: None for field in INTERNAL_FIELDS.values()}
     
@@ -160,13 +186,8 @@ def detect_columns(headers: list[str]) -> dict[str, str | None]:
     
     # Pass 2: Pattern matching for unmatched columns
     for header in headers:
-        # Skip if already matched
-        already_matched = False
-        for csv_col in detected.values():
-            if csv_col == header:
-                already_matched = True
-                break
-        if already_matched:
+        # Skip if already matched to any field
+        if header in detected.values():
             continue
         
         # Try pattern matching
@@ -204,6 +225,17 @@ def detect_columns(headers: list[str]) -> dict[str, str | None]:
         if best_match:
             detected[best_match] = header
             unmatched_fields.remove(best_match)
+    
+    # Pass 4: Deduplication — if a CSV column was mapped to multiple fields,
+    # keep only the first (most specific) mapping
+    seen_columns = {}
+    for field_name, csv_column in detected.items():
+        if csv_column is not None:
+            if csv_column in seen_columns:
+                # This column was already mapped — remove the duplicate
+                detected[field_name] = None
+            else:
+                seen_columns[csv_column] = field_name
     
     return detected
 

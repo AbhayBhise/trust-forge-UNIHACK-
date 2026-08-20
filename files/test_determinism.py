@@ -2,12 +2,27 @@ import unittest
 import json
 import time
 from pipeline import build_product
-from evidence_provider import HardcodedRealDataProvider
 from eval import load_input_rows, deduplicate
+
+
+class MockProvider:
+    """Simple mock provider for testing — returns minimal evidence."""
+    def fetch(self, mfg_part_num: str) -> dict:
+        return {}
+    
+    def fetch_with_row(self, mfg_part_num: str, row: dict) -> dict:
+        return {
+            "_manufacturer_name": "Test Manufacturer",
+            "_brand_name": "Test Brand",
+            "_series": "",
+            "_mfr_url": "test",
+            "facts": {},
+        }
+
 
 class TestDeterminismAndPerformance(unittest.TestCase):
     def test_aba(self):
-        provider = HardcodedRealDataProvider()
+        provider = MockProvider()
         row_A = {"Mfg_Part_Num": "PDSH4816AF", "Part_Desc": "Dishwasher"}
         row_B = {"Mfg_Part_Num": "WDTS7024RZ", "Part_Desc": "Dishwasher"}
         
@@ -18,7 +33,7 @@ class TestDeterminismAndPerformance(unittest.TestCase):
         self.assertEqual(json.dumps(out_A1, sort_keys=True), json.dumps(out_A2, sort_keys=True), "ABA test failed: State leaked between products!")
 
     def test_determinism(self):
-        provider = HardcodedRealDataProvider()
+        provider = MockProvider()
         rows = load_input_rows()
         unique_rows, _ = deduplicate(rows)
         
@@ -42,7 +57,7 @@ class TestDeterminismAndPerformance(unittest.TestCase):
             self.assertEqual(first_output, output, f"Run {i+1} diverged from run 1!")
             
     def test_performance(self):
-        provider = HardcodedRealDataProvider()
+        provider = MockProvider()
         rows = load_input_rows()
         unique_rows, _ = deduplicate(rows)
         
@@ -62,6 +77,7 @@ class TestDeterminismAndPerformance(unittest.TestCase):
         print(f"Throughput: {1/time_per_product:.2f} products/sec")
         print("----------------------------\n")
         self.assertTrue(time_per_product < 1.0) # should be fast
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -51,52 +51,112 @@ DELAY_BETWEEN_REQUESTS = 0.2  # seconds — reduced from 0.3s
 
 # ── Manufacturer search URLs ─────────────────────────────
 # Direct manufacturer search endpoints. E-commerce sites are forbidden.
+# Expanded to cover major appliance and tool manufacturers.
 SEARCH_SOURCES = [
-    # Direct manufacturer search
+    # Major Appliance Manufacturers
     ("frigidaire", "https://www.frigidaire.com/search?query={mpn}"),
     ("whirlpool", "https://www.whirlpool.com/search.html?query={mpn}"),
     ("lg", "https://www.lg.com/us/search?query={mpn}"),
     ("kitchenaid", "https://www.kitchenaid.com/search.html?query={mpn}"),
     ("maytag", "https://www.maytag.com/search.html?query={mpn}"),
-    ("bosch", "https://www.boschtools.com/us/en/search/?q={mpn}"),
     ("ge", "https://www.geappliances.com/appliance/{mpn}"),
+    ("samsung", "https://www.samsung.com/us/search/searchMain/?query={mpn}"),
+    ("bosch_home", "https://www.bosch-home.com/us/search/?q={mpn}"),
+    ("miele", "https://www.miele.com/en-us/search.html?q={mpn}"),
+    ("speed_queen", "https://www.speedqueen.com/search/?q={mpn}"),
+    ("hotpoint", "https://www.hotpoint.com/search.html?query={mpn}"),
+    ("electrolux", "https://www.electrolux.com/search?query={mpn}"),
+    ("haier", "https://www.haier.com/us/search/?q={mpn}"),
+    ("Sharp", "https://www.sharpusa.com/search?q={mpn}"),
+    # Tool Manufacturers
+    ("bosch_tools", "https://www.boschtools.com/us/en/search/?q={mpn}"),
+    ("mirka", "https://www.mirka.com/en-US/search?q={mpn}"),
+    ("milwaukee", "https://www.milwaukeetool.com/search?q={mpn}"),
+    ("dewalt", "https://www.dewalt.com/search?q={mpn}"),
+    ("makita", "https://www.makitatools.com/search?q={mpn}"),
+    ("festool", "https://www.festoolusa.com/search?q={mpn}"),
+    ("ridgid", "https://www.ridgid.com/us/en/search?q={mpn}"),
+    ("craftsman", "https://www.craftsman.com/search?q={mpn}"),
+    # Plumbing / Electrical
+    ("moen", "https://www.moen.com/search?q={mpn}"),
+    ("delta", "https://www.deltafaucet.com/search?q={mpn}"),
+    ("kohler", "https://www.kohler.com/en/search?query={mpn}"),
+    ("leviton", "https://www.leviton.com/search?q={mpn}"),
+    ("lutron", "https://www.lutron.com/en-us/search?q={mpn}"),
 ]
 
+# ── Brand name → manufacturer domain mapping ──────────────────────────
+# Used when the input CSV has a distributor as Part_Manuf, we need to
+# map to the actual manufacturer's website for evidence retrieval.
 BRAND_DOMAINS = {
-    "phillips lighting": "signify.com",
-    "milwaukee accessory": "milwaukeetool.com",
-    "boise cascade building materials": "bc.com",
-    "kichler lighting": "kichler.com",
-    "black & decker/dewlt": "dewalt.com",
-    "parksite": "parksite.com",
-    "freud inc": "freudtools.com",
-    "u s lumber": "uslumber.com",
-    "satco prod inc": "satco.com",
-    "lg electronics": "lg.com",
-    "makita usa inc": "makitatools.com",
-    "southwire/g turner": "southwire.com",
-    "festool usa": "festoolusa.com",
-    "leviton mfg co": "leviton.com",
+    # Appliance brands
+    "frigidaire": "frigidaire.com",
+    "whirlpool": "whirlpool.com",
+    "kitchenaid": "kitchenaid.com",
+    "maytag": "maytag.com",
     "ge appliances": "geappliances.com",
-    "kreg tool company": "kregtool.com",
-    "u s tape company": "ustape.com",
+    "general electric": "geappliances.com",
+    "hotpoint": "hotpoint.com",
+    "electrolux": "electrolux.com",
+    "lg electronics": "lg.com",
+    "samsung": "samsung.com",
+    "bosch": "bosch-home.com",
+    "miele": "miele.com",
+    "speed queen": "speedqueen.com",
+    "haier": "haier.com",
+    "sharp": "sharpusa.com",
+    # Tool brands
     "bosch": "boschtools.com",
+    "mirka abrasives inc": "mirka.com",
+    "mirka": "mirka.com",
+    "milwaukee accessory": "milwaukeetool.com",
+    "milwaukee tool": "milwaukeetool.com",
+    "black & decker/dewlt": "dewalt.com",
+    "dewalt": "dewalt.com",
+    "makita usa inc": "makitatools.com",
+    "makita": "makitatools.com",
+    "festool usa": "festoolusa.com",
+    "festool": "festoolusa.com",
+    "ridgid": "ridgid.com",
+    "craftsman": "craftsman.com",
+    # Plumbing brands
+    "moen": "moen.com",
+    "delta": "deltafaucet.com",
+    "kohler": "kohler.com",
+    # Electrical brands
+    "leviton mfg co": "leviton.com",
+    "leviton": "leviton.com",
+    "lutron": "lutron.com",
+    "phillips lighting": "signify.com",
+    "satco prod inc": "satco.com",
+    "kichler lighting": "kichler.com",
+    # Other
     "3m": "3m.com",
+    "southwire/g turner": "southwire.com",
+    "freud inc": "freudtools.com",
+    "kreg tool company": "kregtool.com",
+    "parksite": "parksite.com",
+    "u s lumber": "uslumber.com",
+    "u s tape company": "ustape.com",
+    "boise cascade building materials": "bc.com",
 }
 
 # ── Attribute extraction patterns (supplement html_spec_extractor) ──
-# These are targeted patterns for common appliance spec structures
-# that the generic extractor might miss.
+# Comprehensive patterns for extracting specs from manufacturer pages.
+# These cover appliances, tools, plumbing, electrical, and building materials.
 EXTRA_PATTERNS = [
-    # "Voltage: 120 V" anywhere in text
+    # Voltage
     (re.compile(r"Voltage\s*[:\-]\s*(\d+)\s*V", re.I), "Voltage Rating", "V"),
     (re.compile(r"(\d+)\s*Volts?", re.I), "Voltage Rating", "V"),
-    # "Amperage: 15 A" or "Amps: 15"
+    (re.compile(r"(\d+)\s*v\b", re.I), "Voltage Rating", "V"),
+    # Amperage
     (re.compile(r"Amper(?:age|s)\s*[:\-]\s*(\d+)\s*A?", re.I), "Amperage Rating", "A"),
     (re.compile(r"(\d+)\s*Amps?\b", re.I), "Amperage Rating", "A"),
+    (re.compile(r"(\d+)\s*A\b", re.I), "Amperage Rating", "A"),
     # Sound level
     (re.compile(r"(\d+)\s*dBA?\b", re.I), "Sound Level", "dBA"),
     (re.compile(r"Noise\s*[:\-]\s*(\d+)\s*dB", re.I), "Sound Level", "dBA"),
+    (re.compile(r"Decibel\s*(?:Level)?\s*[:\-]\s*(\d+)", re.I), "Sound Level", "dBA"),
     # Wash cycles
     (re.compile(r"(\d+)\s*(?:wash\s*)?Cycles?", re.I), "Number of Wash Cycles", None),
     (re.compile(r"Cycles?\s*[:\-]\s*(\d+)", re.I), "Number of Wash Cycles", None),
@@ -104,13 +164,21 @@ EXTRA_PATTERNS = [
     (re.compile(r"Built[\s\-]?in", re.I), "Mounting Type", None),
     (re.compile(r"Freestanding", re.I), "Mounting Type", None),
     (re.compile(r"Countertop", re.I), "Mounting Type", None),
+    (re.compile(r"Top[\s\-]Load", re.I), "Mounting Type", None),
+    (re.compile(r"Front[\s\-]Load", re.I), "Mounting Type", None),
+    (re.compile(r"Under[\s\-]?counter", re.I), "Mounting Type", None),
+    (re.compile(r"Deck\s*Mount", re.I), "Mounting Type", None),
+    (re.compile(r"Wall\s*Mount", re.I), "Mounting Type", None),
     # Material / finish — prefer tub/interior material
     (re.compile(r"(?:Tub|Drum|Interior)\s*(?:Material|Finish)\s*[:\-]\s*([\w\s]+?)(?:\.|,|;|$)", re.I), "Material", None),
     (re.compile(r"Stainless\s*Steel", re.I), "Material", None),
+    (re.compile(r"Material\s*[:\-]\s*(Stainless\s*Steel|Plastic|Porcelain|Glass|Aluminum|Steel|Brass|Copper|Cast\s*Iron|Ceramic)", re.I), "Material", None),
     # Color
-    (re.compile(r"(?:Color|Colour|Finish)\s*[:\-]\s*(Stainless Steel|White|Black|Slate|Graphite|Bisque|Black Stainless|Silver|Matte Black|Gray|Platinum)", re.I), "Color", None),
-    # Dimensions — H x W x D format (e.g. "33-7/16 in H x 23-7/8 in W x 22-5/8 in D")
+    (re.compile(r"(?:Color|Colour|Finish)\s*[:\-]\s*(Stainless Steel|White|Black|Slate|Graphite|Bisque|Black Stainless|Silver|Matte Black|Gray|Platinum|Chrome|Brushed Nickel|Oil Rubbed Bronze|Polished Brass)", re.I), "Color", None),
+    # Dimensions — H x W x D format
     (re.compile(r"(\d+(?:[\-–]\d+/\d+)?)\s*in\.?\s*H\s*[x×]\s*(\d+(?:[\-–]\d+/\d+)?)\s*in\.?\s*W\s*[x×]\s*(\d+(?:[\-–]\d+/\d+)?)\s*in\.?\s*D", re.I), "Size", "in"),
+    # Partial dimensions
+    (re.compile(r"(\d+(?:[\-–]\d+/\d+)?)\s*in\.?\s*W\s*[x×]\s*(\d+(?:[\-–]\d+/\d+)?)\s*in\.?\s*D", re.I), "Size", "in"),
     # Depth with door open
     (re.compile(r"(?:Depth\s+[Ww]ith\s+[Dd]oor\s+[Oo]pen|With\s+[Dd]oor\s+[Oo]pen)\s*[:\-]?\s*(\d+(?:[\-–]\d+/\d+)?)\s*(?:in\.?|inch)?", re.I), "Depth With Door Open", "in"),
     # Energy/Annual energy
@@ -119,62 +187,117 @@ EXTRA_PATTERNS = [
     (re.compile(r"(\d+)\s*(?:to|-)?\s*(\d+)\s*[Hh](?:our)?\s*[Dd]elay", re.I), "Delay Start", "hr"),
     # Sound with range
     (re.compile(r"(\d+)\s*[-–to]+\s*(\d+)\s*dBA", re.I), "Sound Level", "dBA"),
+    # Wattage
+    (re.compile(r"Watt(?:age)?\s*[:\-]\s*(\d+)\s*W", re.I), "Wattage", "W"),
+    (re.compile(r"(\d+)\s*W(?:atts?)?\b", re.I), "Wattage", "W"),
+    # Flow Rate (faucets)
+    (re.compile(r"Flow\s*Rate\s*[:\-]\s*(\d+(?:\.\d+)?)\s*(?:gpm|GPM)", re.I), "Flow Rate", "gpm"),
+    (re.compile(r"(\d+(?:\.\d+)?)\s*gpm\b", re.I), "Flow Rate", "gpm"),
+    # Number of Handles (faucets)
+    (re.compile(r"(\d+)\s*Handle", re.I), "Number of Handles", None),
+    # Pipe Size (fittings)
+    (re.compile(r"(?:Pipe|Tube)\s*Size\s*[:\-]\s*([\d/\-]+)\s*(?:in\.?|inch)?", re.I), "Pipe Size", "in"),
+    (re.compile(r"(\d+(?:/\d+)?)\s*(?:in\.?|inch)\s*(?:NPT|Pipe)", re.I), "Pipe Size", "in"),
+    # Maximum Pressure (fittings)
+    (re.compile(r"(?:Max(?:imum)?)?\s*Pressure\s*[:\-]\s*(\d+)\s*(?:psi|PSI)", re.I), "Maximum Pressure", "psi"),
+    (re.compile(r"(\d+)\s*psi\b", re.I), "Maximum Pressure", "psi"),
+    # Weight
+    (re.compile(r"Weight\s*[:\-]\s*(\d+(?:\.\d+)?)\s*(?:lb|lbs?|pound)", re.I), "Weight", "lb"),
+    (re.compile(r"(\d+(?:\.\d+)?)\s*(?:lb|lbs?)\b", re.I), "Weight", "lb"),
+    # Warranty
+    (re.compile(r"Warranty\s*[:\-]\s*(.+?)(?:\.|$)", re.I), "Warranty", None),
+    # Model Number
+    (re.compile(r"Model\s*(?:Number|No\.?)?\s*[:\-]\s*([A-Z0-9\-]+)", re.I), "Model", None),
+    # EAN/UPC
+    (re.compile(r"(?:EAN|UPC|GTIN)\s*[:\-]?\s*(\d{12,14})", re.I), "EAN/UPC", None),
+    # Series
+    (re.compile(r"Series\s*[:\-]?\s*([A-Z][A-Za-z\s]+?)(?:\s|$|,|\.)", re.I), "Series", None),
+    (re.compile(r"((?:Eco|Professional|Ultra|Premium|Standard|Elite|Platinum|Signature|Heritage|Classic)\s*Series)", re.I), "Series", None),
+    # Energy Star
+    (re.compile(r"ENERGY\s*STAR", re.I), "Energy Star", None),
 ]
 
 # Canonical attribute name mapping (lowercase → canonical)
+# Comprehensive mapping covering appliances, tools, plumbing, electrical
 ATTR_MAP = {
-    "voltage": "Voltage Rating",
-    "voltage rating": "Voltage Rating",
-    "amperage": "Amperage Rating",
-    "amperage rating": "Amperage Rating",
-    "amps": "Amperage Rating",
-    "amp rating": "Amperage Rating",
-    "sound level": "Sound Level",
-    "decibel level": "Sound Level",
-    "noise level": "Sound Level",
-    "dba": "Sound Level",
-    "material": "Material",
-    "tub material": "Material",
-    "finish": "Material",
-    "mounting": "Mounting Type",
-    "mounting type": "Mounting Type",
-    "install type": "Mounting Type",
-    "size": "Size",
-    "dimensions": "Size",
-    "product dimensions": "Size",
-    "depth": "Depth With Door Open",
-    "depth with door open": "Depth With Door Open",
-    "wash cycles": "Number of Wash Cycles",
-    "number of wash cycles": "Number of Wash Cycles",
-    "cycles": "Number of Wash Cycles",
-    "cycle count": "Number of Wash Cycles",
-    "series": "Series",
-    "product series": "Series",
-    "color": "Color",
-    "colour": "Color",
-    "plug type": "Plug Type",
-    "power cord": "Plug Type",
-    "weight": "Weight",
-    "product weight": "Weight",
-    "height": "Minimum Height",
-    "min height": "Minimum Height",
-    "minimum height": "Minimum Height",
-    "max height": "Maximum Height",
-    "maximum height": "Maximum Height",
+    # Electrical
+    "voltage": "Voltage Rating", "voltage rating": "Voltage Rating",
+    "voltage (v)": "Voltage Rating", "electrical rating": "Voltage Rating",
+    "amperage": "Amperage Rating", "amperage rating": "Amperage Rating",
+    "amps": "Amperage Rating", "amp rating": "Amperage Rating",
+    "amperage (a)": "Amperage Rating", "current": "Amperage Rating",
+    # Sound
+    "sound level": "Sound Level", "decibel level": "Sound Level",
+    "noise level": "Sound Level", "dba": "Sound Level",
+    "noise": "Sound Level", "sound": "Sound Level",
+    # Material
+    "material": "Material", "tub material": "Material",
+    "finish": "Material", "drum material": "Material",
+    "interior material": "Material", "body material": "Material",
+    # Mounting
+    "mounting": "Mounting Type", "mounting type": "Mounting Type",
+    "install type": "Mounting Type", "installation type": "Mounting Type",
+    "mount": "Mounting Type", "setup": "Mounting Type",
+    # Dimensions
+    "size": "Size", "dimensions": "Size", "product dimensions": "Size",
+    "product size": "Size", "overall dimensions": "Size",
+    "height": "Minimum Height", "min height": "Minimum Height",
+    "minimum height": "Minimum Height", "product height": "Minimum Height",
+    "max height": "Maximum Height", "maximum height": "Maximum Height",
     "adjustable height": "Maximum Height",
-    "width": "Width",
-    "energy star": "Energy Star",
-    "energy rating": "Energy Star",
-    "energy use": "Additional Information",
+    "width": "Size", "product width": "Size",
+    "depth": "Depth With Door Open", "depth with door open": "Depth With Door Open",
+    "depth (door open)": "Depth With Door Open",
+    # Cycles
+    "wash cycles": "Number of Wash Cycles", "number of wash cycles": "Number of Wash Cycles",
+    "cycles": "Number of Wash Cycles", "cycle count": "Number of Wash Cycles",
+    "number of cycles": "Number of Wash Cycles",
+    # Series
+    "series": "Series", "product series": "Series", "product line": "Series",
+    # Model
+    "model": "Model", "model number": "Model", "model name": "Model",
+    "mfg part num": "Model", "product model": "Model",
+    # Color
+    "color": "Color", "colour": "Color", "finish color": "Color",
+    "exterior color": "Color",
+    # Power
+    "plug type": "Plug Type", "power cord": "Plug Type", "plug": "Plug Type",
+    "wattage": "Wattage", "power": "Wattage", "watts": "Wattage",
+    # Weight
+    "weight": "Weight", "product weight": "Weight", "net weight": "Weight",
+    # Energy
+    "energy star": "Energy Star", "energy rating": "Energy Star",
+    "energy use": "Additional Information", "energy consumption": "Additional Information",
+    # Flow (faucets)
+    "flow rate": "Flow Rate", "water flow": "Flow Rate",
+    # Handles (faucets)
+    "handles": "Number of Handles", "number of handles": "Number of Handles",
+    "handle type": "Handle Type",
+    # Fittings
+    "fitting type": "Fitting Type", "type": "Fitting Type",
+    "connection type": "Connection Type 1", "pipe size": "Pipe Size",
+    "schedule": "Schedule", "max pressure": "Maximum Pressure",
+    "maximum pressure": "Maximum Pressure",
+    # Warranty
+    "warranty": "Warranty", "warranty information": "Warranty",
+    # UPC/EAN
+    "ean": "EAN/UPC", "upc": "EAN/UPC", "gtin": "EAN/UPC",
+    "ean/upc": "EAN/UPC", "barcode": "EAN/UPC",
+    # Additional
     "additional information": "Additional Information",
+    "features": "Additional Information", "feature": "Additional Information",
+    "description": "Additional Information",
+    # Faucet specific
+    "faucet type": "Faucet Type", "spout type": "Spout Type",
+    "spout reach": "Spout Reach", "spout height": "Spout Height",
+    "valve type": "Valve Type", "connection size": "Connection Size",
+    "ada compliant": "ADA Compliant",
     "delay start": "Additional Information",
-    "color": "Color",
-    "colour": "Color",
-    "warranty": "Warranty",
 }
 
 # Brand/manufacturer inference from page content
 KNOWN_BRANDS = {
+    # Appliance brands
     "frigidaire": ("FRIGIDAIRE", "Electrolux"),
     "whirlpool": ("Whirlpool", "Whirlpool Corporation"),
     "lg": ("LG", "LG Electronics"),
@@ -188,6 +311,24 @@ KNOWN_BRANDS = {
     "electrolux": ("Electrolux", "Electrolux"),
     "miele": ("Miele", "Miele"),
     "speed queen": ("Speed Queen", "Alliance Laundry Systems"),
+    "haier": ("Haier", "Haier"),
+    "sharp": ("Sharp", "Sharp Electronics"),
+    # Tool brands
+    "dewalt": ("DEWALT", "Stanley Black & Decker"),
+    "milwaukee": ("Milwaukee", "Techtronic Industries"),
+    "makita": ("Makita", "Makita USA"),
+    "festool": ("Festool", "Festool USA"),
+    "ridgid": ("Ridgid", "Emerson Electric"),
+    "craftsman": ("Craftsman", "Stanley Black & Decker"),
+    "bosch tools": ("Bosch", "Robert Bosch Tool Corporation"),
+    # Plumbing brands
+    "moen": ("Moen", "Fortune Brands Innovations"),
+    "delta": ("Delta", "Masco Corporation"),
+    "kohler": ("Kohler", "Kohler Co"),
+    # Electrical brands
+    "leviton": ("Leviton", "Leviton Manufacturing"),
+    "lutron": ("Lutron", "Lutron Electronics"),
+    "3m": ("3M", "3M Company"),
 }
 
 
@@ -260,6 +401,7 @@ class WebEvidenceProvider(EvidenceProvider):
         
         urls_to_try = []
         brand_lower = brand.lower() if brand else ""
+        brand_lower = re.sub(r'\s*\([^)]*\)', '', brand_lower).strip()
         
         # DDGS search is completely disabled because the network sandbox blocks it, causing a 10s timeout per item
         # try:
@@ -298,11 +440,18 @@ class WebEvidenceProvider(EvidenceProvider):
                 params = {"url": search_url, "mpn": mpn}
                 resp = requests.get("http://127.0.0.1:8001/fetch", params=params, timeout=30)
                 if resp.status_code == 200:
-                    html = resp.json().get("html", "")
+                    data = resp.json()
+                    html = data.get("html", "")
+                    real_url = data.get("final_url", search_url)
                 else:
                     html = ""
-                real_url = search_url
+                    real_url = search_url
                     
+                is_search_url = "search" in search_url.lower() or "query" in search_url.lower() or "?q=" in search_url.lower()
+                if is_search_url and real_url == search_url:
+                    log.debug(f"  {source_name}: failed to navigate to product page (still on search page)")
+                    continue
+
                 if len(html) < 500:
                     log.debug(f"  {source_name}: page too small ({len(html)} bytes)")
                     continue
@@ -431,7 +580,7 @@ class WebEvidenceProvider(EvidenceProvider):
                 if value and attr_label not in results:
                     ev = Evidence(
                         source_url="web_fetch",
-                        source_tier=3,
+                        source_tier=5,
                         page_or_section="targeted regex extraction",
                     )
                     # Normalize value for certain attributes

@@ -4,6 +4,9 @@ let rcData = null;
 let liveData = null;
 let liveCsvUrl = null;
 let currentView = 'dashboard';
+let currentPage = 1;
+const PAGE_SIZE = 50;
+let tableFullPage = false;
 
 const VIEW_TITLES = {
     dashboard: 'Dashboard',
@@ -61,6 +64,11 @@ function renderDashboard() {
     let avgComp = 0;
     data.forEach(p => avgComp += (p.quality_score.completeness || 0));
     avgComp = data.length ? (avgComp / data.length) : 0;
+    
+    // Pagination logic
+    const totalPages = Math.ceil(data.length / PAGE_SIZE);
+    const startIdx = (currentPage - 1) * PAGE_SIZE;
+    const pageData = data.slice(startIdx, startIdx + PAGE_SIZE);
 
     return `
         <div class="kpi-grid">
@@ -92,9 +100,12 @@ function renderDashboard() {
                     <div class="card-title">Processed Products</div>
                     <div class="card-subtitle">Click any row to view pipeline journey</div>
                 </div>
-                ${liveData ? `<a href="${liveCsvUrl || '#'}" download class="btn btn-secondary btn-sm">&#8681; Export CSV</a>` : ''}
+                <div>
+                    <button class="btn btn-ghost btn-sm" onclick="toggleTableFull()">[ ] Toggle Full Page</button>
+                    ${liveData ? `<a href="${liveCsvUrl || '#'}" download class="btn btn-secondary btn-sm">&#8681; Export CSV</a>` : ''}
+                </div>
             </div>
-            <div class="table-container">
+            <div class="table-container" style="${tableFullPage ? '' : 'max-height: 500px; overflow-y: auto;'}">
                 <table>
                     <thead>
                         <tr>
@@ -108,8 +119,10 @@ function renderDashboard() {
                         </tr>
                     </thead>
                     <tbody>
-                        ${data.map((p, i) => `
-                            <tr style="cursor:pointer" onclick="nav('journey', ${i})">
+                        ${pageData.map((p, i) => {
+                            const globalIndex = startIdx + i;
+                            return `
+                            <tr style="cursor:pointer" onclick="nav('journey', ${globalIndex})">
                                 <td><strong>${esc(p.mfg_part_num)}</strong></td>
                                 <td>${esc(p.manufacturer_name)}</td>
                                 <td>${esc(p.brand_name)}</td>
@@ -123,12 +136,23 @@ function renderDashboard() {
                                     </div>
                                 </td>
                                 <td style="font-size:0.875rem;color:var(--gray-600)">${Math.round((p.quality_score.mean_confidence||0)*100)}%</td>
-                                <td><button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();nav('detail',${i})">View</button></td>
+                                <td><button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();nav('detail',${globalIndex})">View</button></td>
                             </tr>
-                        `).join('')}
+                            `;
+                        }).join('')}
                     </tbody>
                 </table>
             </div>
+            ${data.length > PAGE_SIZE ? `
+            <div style="display:flex; justify-content:space-between; align-items:center; padding: 1rem; border-top: 1px solid var(--border-light); font-size: 0.875rem;">
+                <div style="color:var(--gray-500)">Showing ${startIdx + 1} to ${Math.min(startIdx + PAGE_SIZE, data.length)} of ${data.length} products</div>
+                <div style="display:flex; gap: 0.5rem;">
+                    <button class="btn btn-ghost btn-sm" onclick="changePage(-1)" ${currentPage === 1 ? 'disabled' : ''}>&larr; Previous</button>
+                    <div style="padding: 0.25rem 0.5rem;">Page ${currentPage} of ${totalPages}</div>
+                    <button class="btn btn-ghost btn-sm" onclick="changePage(1)" ${currentPage === totalPages ? 'disabled' : ''}>Next &rarr;</button>
+                </div>
+            </div>
+            ` : ''}
         </div>
     `;
 }
@@ -137,6 +161,20 @@ function completenessColor(v) {
     if (v >= 0.8) return 'green';
     if (v >= 0.5) return 'yellow';
     return 'red';
+}
+
+function changePage(delta) {
+    const data = liveData || productsData;
+    const totalPages = Math.ceil(data.length / PAGE_SIZE);
+    currentPage += delta;
+    if (currentPage < 1) currentPage = 1;
+    if (currentPage > totalPages) currentPage = totalPages;
+    document.getElementById('app-content').innerHTML = renderDashboard();
+}
+
+function toggleTableFull() {
+    tableFullPage = !tableFullPage;
+    document.getElementById('app-content').innerHTML = renderDashboard();
 }
 
 /* ── Upload / Live Demo ───────────────────────────────────────────── */
@@ -171,6 +209,11 @@ function renderUpload() {
                         <div id="upload-progress-bar" class="progress-fill blue" style="width:0%"></div>
                     </div>
                     <div id="upload-stats" style="font-size:0.8125rem;color:var(--gray-400);margin-top:0.5rem"></div>
+                    
+                    <div style="margin-top:1.5rem;background:#1e1e1e;color:#00ff00;padding:0.75rem;font-family:monospace;font-size:0.75rem;border-radius:6px;height:100px;overflow:hidden;text-align:left;width:100%;max-width:450px;margin-left:auto;margin-right:auto;box-shadow:inset 0 2px 4px rgba(0,0,0,0.5);">
+                        <div style="color:#888;margin-bottom:0.25rem;border-bottom:1px solid #333;padding-bottom:0.25rem;">Live Extraction Log</div>
+                        <div id="activity-content"></div>
+                    </div>
                 </div>
             </div>
             <div id="upload-error" style="display:none;color:var(--danger);margin-top:1rem;font-size:0.875rem"></div>
@@ -269,6 +312,11 @@ async function pollJobProgress(jobId) {
                     + ` | ${job.progress.needs_review} needs review`
                     + ` | ${Math.round(job.progress.rate_per_sec || 0)} rows/sec`
                     + ` | ETA: ${Math.round(job.progress.eta_seconds || 0)}s`;
+            }
+            
+            if (job.activity && job.activity.length) {
+                const actDiv = document.getElementById('activity-content');
+                if (actDiv) actDiv.innerHTML = job.activity.map(a => `<div>> ${esc(a)}</div>`).join('');
             }
             
             if (job.status === 'completed') {
@@ -399,7 +447,7 @@ function renderDetail(index) {
                     <div class="attr-value">${a.value !== null ? esc(a.value) : '—'} ${a.uom ? esc(a.uom) : ''}</div>
                     <div class="attr-meta">
                         <span>Conf: ${Math.round((a.confidence||0)*100)}%</span>
-                        ${a.evidence && a.evidence.length && a.evidence[0].source_url && a.evidence[0].source_url !== 'web_fetch' ? `<a href="${esc(a.evidence[0].source_url)}" target="_blank" class="btn btn-ghost btn-sm" style="font-size:0.75rem;padding:0.125rem 0.375rem;text-decoration:none" onclick="event.stopPropagation()">&#128279; View Source</a>` : ''}
+                        ${a.evidence && a.evidence.length && a.evidence[0].source_url && a.evidence[0].source_url !== 'web_fetch' && !a.evidence[0].source_url.startsWith('part_desc') ? `<a href="${esc(a.evidence[0].source_url)}" target="_blank" class="btn btn-ghost btn-sm" style="font-size:0.75rem;padding:0.125rem 0.375rem;text-decoration:none" onclick="event.stopPropagation()">&#128279; View Source</a>` : ''}
                         ${a.evidence && a.evidence.length ? `<span style="font-size:0.75rem;color:var(--gray-400)">${esc(sourceName(a.evidence[0].source_url))}</span>` : ''}
                     </div>
                 </div>
@@ -438,7 +486,10 @@ function renderExplain(args) {
             </div>
             <div class="evidence-source">
                 <strong>Source:</strong>&nbsp;
-                <a href="${esc(ev.source_url)}" target="_blank">${esc(ev.source_url)}</a>
+                ${ev.source_url.startsWith('part_desc') ?
+                    `<span style="color:var(--gray-700)">Extracted from Part Description</span>` :
+                    `<a href="${esc(ev.source_url)}" target="_blank">${esc(ev.source_url)}</a>`
+                }
             </div>
             <div style="margin-top:0.75rem;font-size:0.8125rem;color:var(--gray-600)">
                 <div><strong>Section:</strong> ${esc(ev.page_or_section)}</div>
@@ -629,6 +680,7 @@ function esc(s) {
 
 function sourceName(url) {
     if (!url) return 'unknown';
+    if (url.startsWith('part_desc')) return 'Product Description';
     try {
         const h = new URL(url).hostname;
         return h.replace('www.', '');

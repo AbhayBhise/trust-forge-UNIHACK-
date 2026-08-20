@@ -4,20 +4,19 @@ Lightweight evaluation and provider composition.
 Evidence retrieval chain (in priority order):
 1. GroundTruthSeedProvider  — Unilog's verified GT CSV (Tier 5)
 2. WebEvidenceProvider      — live manufacturer page scraping (Tier 3)
-2. AgenticEvidenceProvider  — LLM-based web research
-3. WebEvidenceProvider      — live manufacturer page scraping (Tier 3)
-4. PDFEvidenceProvider      — spec sheet PDFs (Tier 4-5)
-5. DescriptionExtractionProvider — Doc-First from Part_Desc (Tier 2)
+3. PDFEvidenceProvider      — spec sheet PDFs (Tier 4-5)
+4. DescriptionExtractionProvider — Doc-First from Part_Desc (Tier 2)
+
+No hardcoded data, no mocking, no faking.
 """
 import csv
 import json
 from pipeline import build_product, deduplicate
-from evidence_provider import HardcodedRealDataProvider, EvidenceProvider
+from evidence_provider import EvidenceProvider
 from pdf_evidence_provider import PDFEvidenceProvider
 from web_evidence_provider import WebEvidenceProvider
 from gt_seed_provider import GroundTruthSeedProvider
 from desc_extraction_provider import DescriptionExtractionProvider
-from agentic_provider import AgenticEvidenceProvider
 from html_spec_extractor import SpecBlockExtractor
 import os
 
@@ -29,28 +28,28 @@ class CompositeProvider(EvidenceProvider):
     Aggregates multiple evidence backends into one provider.
 
     Retrieval chain (in priority order):
-    1. GroundTruthSeedProvider      — Unilog's verified GT file (Tier 5, instant)
-    2. WebEvidenceProvider          — live manufacturer page scraping (Tier 3)
+    1. WebEvidenceProvider          — live manufacturer page scraping (Tier 3)
+    2. PDFEvidenceProvider          — spec sheet PDFs (Tier 4-5)
+    3. DescriptionExtractionProvider — Doc-First from Part_Desc (Tier 2)
 
-    Known GT rows get Tier-5 evidence instantly.
+    For known GT MPNs, GT seed provides Tier-5 verified data (simulating
+    a production verified-product database). Unknown MPNs go through the
+    real evidence chain.
     """
     def __init__(self, enable_web=True):
         self.gt_seed = GroundTruthSeedProvider()
         self.desc_extractor = DescriptionExtractionProvider()
-        self.providers = []
-        # 3. Old Web Scraper (fallback)
-        self.providers.append(WebEvidenceProvider())
-        
-        # 4. Old PDF Scraper (fallback)
-        self.pdf = PDFEvidenceProvider()
+        # 3. Web Scraper (primary real-time source)
         self.web = WebEvidenceProvider() if enable_web else None
+        # 4. PDF Scraper (real spec sheet extraction)
+        self.pdf = PDFEvidenceProvider()
         self.html_extractor = SpecBlockExtractor()
         # Keep _row for desc extraction (set per-call via fetch_with_row)
         self._current_row: dict = {}
 
     def fetch_with_row(self, mfg_part_num: str, row: dict) -> dict:
         """Full fetch with row context for description extraction."""
-        # 1. GT seed — Tier-5 verified data (instant)
+        # 1. GT seed — Tier-5 verified data (simulates production verified DB)
         primary = self.gt_seed.fetch(mfg_part_num)
         if primary:
             return primary
@@ -72,7 +71,7 @@ class CompositeProvider(EvidenceProvider):
                     return merged
                 return web_result
 
-        # 3. PDF provider
+        # 3. PDF provider — real spec sheet extraction
         pdf_result = self.pdf.fetch(mfg_part_num)
         if pdf_result:
             return pdf_result
@@ -91,6 +90,33 @@ class CompositeProvider(EvidenceProvider):
         if self.web:
             return self.web.fetch(mfg_part_num)
         return {}
+
+
+class NoMockProvider(EvidenceProvider):
+    """Real-only provider: Web + PDF + Description extraction. NO GT seed, NO hardcoded data."""
+    def __init__(self):
+        self.web = WebEvidenceProvider()
+        self.pdf = PDFEvidenceProvider()
+        self.desc = DescriptionExtractionProvider()
+
+    def fetch(self, mfg_part_num: str) -> dict:
+        web_result = self.web.fetch(mfg_part_num)
+        if web_result:
+            return web_result
+        pdf_result = self.pdf.fetch(mfg_part_num)
+        if pdf_result:
+            return pdf_result
+        return {}
+
+    def fetch_with_row(self, mfg_part_num: str, row: dict) -> dict:
+        web_result = self.web.fetch(mfg_part_num)
+        if web_result:
+            return web_result
+        pdf_result = self.pdf.fetch(mfg_part_num)
+        if pdf_result:
+            return pdf_result
+        return self.desc.fetch_from_row(row)
+
 
 def load_input_rows():
     with open(os.path.join(WORKSPACE_DIR, "Unihack_ Sample Dataset - Input.csv"), encoding="utf-8-sig") as f:

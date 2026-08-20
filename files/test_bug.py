@@ -1,10 +1,25 @@
 import json
 from pipeline import build_product
-from evidence_provider import HardcodedRealDataProvider
 from config_appliances import ATTRIBUTES
 
+
+class MockProvider:
+    """Simple mock provider for testing — returns minimal evidence."""
+    def fetch(self, mfg_part_num: str) -> dict:
+        return {}
+    
+    def fetch_with_row(self, mfg_part_num: str, row: dict) -> dict:
+        return {
+            "_manufacturer_name": "Test Manufacturer",
+            "_brand_name": "Test Brand",
+            "_series": "",
+            "_mfr_url": "test",
+            "facts": {},
+        }
+
+
 def prove_bug():
-    provider = HardcodedRealDataProvider()
+    provider = MockProvider()
     
     # Process PDSH4816AF first
     row_A = {"Mfg_Part_Num": "PDSH4816AF", "Part_Desc": "Dishwasher"}

@@ -27,18 +27,23 @@ async def shutdown():
 async def fetch(url: str, mpn: str = ""):
     page = await context.new_page()
     try:
-        await page.goto(url, wait_until='domcontentloaded', timeout=15000)
+        try:
+            await page.goto(url, wait_until='networkidle', timeout=15000)
+        except Exception as e:
+            # If networkidle times out, we still have the page DOM, so just continue
+            pass
         if mpn:
             try:
                 await page.wait_for_selector(f"a:has-text(\"{mpn}\"), a[href*=\"{mpn.lower()}\"]", timeout=3000)
                 loc = page.locator(f"a:has-text(\"{mpn}\"), a[href*=\"{mpn.lower()}\"]").first
                 if await loc.is_visible():
                     await loc.click(timeout=5000)
-                    await page.wait_for_load_state('domcontentloaded', timeout=5000)
+                    await page.wait_for_load_state('networkidle', timeout=5000)
             except Exception:
                 pass
         content = await page.content()
-        return {"html": content}
+        final_url = page.url
+        return {"html": content, "final_url": final_url}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
     finally:

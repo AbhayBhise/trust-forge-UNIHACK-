@@ -139,7 +139,7 @@ EDGE_KEYWORDS = {
 
 def _make_ev(source_desc: str = "") -> Evidence:
     return Evidence(
-        source_url=f"part_desc://{source_desc}",
+        source_url=f"part_desc-{source_desc}",
         source_tier=DESC_SOURCE_TIER,
         page_or_section="Part_Desc field extraction",
     )
@@ -313,11 +313,11 @@ class DescriptionExtractionProvider(EvidenceProvider):
             "_manufacturer_name": manuf,
             "_brand_name": brand,
             "_series": series,
-            "source_url": ev.source_url if 'ev' in locals() else "part_desc://",
+            "source_url": ev.source_url if 'ev' in locals() else "part_desc-",
             "source_tier": DESC_SOURCE_TIER,
             "_category": category,
             "_product_name": product_name,
-            "_mfr_url": f"part_desc://{mpn}",
+            "_mfr_url": f"part_desc-{mpn}",
             "_with_phrase": "",
             "_approvals": "",
             "_classpath": "",

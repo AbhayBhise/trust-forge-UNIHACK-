@@ -18,6 +18,7 @@ from desc_extraction_provider import DescriptionExtractionProvider
 import config_appliances
 import config_faucets
 import config_fittings
+import config_generic
 
 
 PLACEHOLDER_BRANDS = {"-- Unbranded --", "-- No Unilog Brand --", "-- No DIB Brand --"}
@@ -114,12 +115,24 @@ def build_product(row: dict, provider: EvidenceProvider) -> Product:
     else:
         category = getattr(product, '_category', 'Unknown')
         
-    if "Faucet" in category or "Faucets" in category:
+    # Category detection — check both classpath and part_desc for accurate routing
+    cat_lower = category.lower()
+    if ("faucet" in cat_lower or "faucets" in cat_lower or
+        "faucet" in part_desc or "kitchen faucet" in part_desc or "bath faucet" in part_desc):
         product._cfg = config_faucets
-    elif "Fitting" in category or "Fittings" in category or "Pipe" in category or "Plumbing" in category:
+    elif ("fitting" in cat_lower or "fittings" in cat_lower or "pipe" in cat_lower or
+          "plumbing" in cat_lower or "fitting" in part_desc or "elbow" in part_desc or
+          "tee" in part_desc or "coupling" in part_desc or "nipple" in part_desc):
         product._cfg = config_fittings
-    else:
+    elif ("appliance" in cat_lower or "appliances" in cat_lower or
+          "dishwasher" in cat_lower or "dishwashers" in cat_lower or
+          "dishwasher" in part_desc or "washer" in part_desc or
+          "dryer" in part_desc or "refrigerator" in part_desc or
+          "oven" in part_desc or "range" in part_desc or
+          "microwave" in part_desc or "cooktop" in part_desc):
         product._cfg = config_appliances
+    else:
+        product._cfg = config_generic
 
     facts = evidence_bundle.get("facts", {}) if evidence_found else {}
 
@@ -318,6 +331,15 @@ def _cross_validate_evidence(product: Product, evidence_bundle: dict):
 def _score_confidence(attr: Attribute, product: Product):
     """
     Confidence scoring that works for both appliance (Tier 5) and generic (Tier 2) products.
+    
+    Multi-factor scoring:
+    - Identity verification (was the product found in manufacturer evidence?)
+    - Evidence tier (PDF > HTML > description text)
+    - Title match (does the attribute match the product description?)
+    - Unit normalization (was the UOM standardized?)
+    - Taxonomy validity (do we know what category this product belongs to?)
+    - Normalization boost (was the value mapped to a canonical form?)
+    - Cross-validation bonus (do multiple sources agree?)
     """
     w = product._cfg.CONFIDENCE_WEIGHTS
     checks = attr.checks
@@ -350,12 +372,21 @@ def _score_confidence(attr: Attribute, product: Product):
         score -= product._cfg.MISSING_REQUIRED_PENALTY
 
     score = max(0.0, min(1.0, score))
+    
+    # Apply tier-based confidence ceiling (not floor)
+    # Tier 5 (GT seed / PDF) allows high confidence but doesn't force 1.0
+    # Tier 4 (manual) caps at 0.95
+    # Tier 3 (HTML) caps at 0.85
     if attr.evidence:
         top_tier = max([ev.source_tier for ev in attr.evidence])
         if top_tier == 5:
-            score = 1.0
+            score = max(score, 0.90)  # GT/PDF: ensure at least 0.90
         elif top_tier == 4:
-            score = max(score, 0.95)
+            score = max(score, 0.85)
+            score = min(score, 0.95)
+        elif top_tier == 3:
+            score = min(score, 0.85)
+    
     attr.confidence = score
 
     if not attr.value:
@@ -388,10 +419,68 @@ def _render_descriptions(product: Product, row: dict):
     depth = product.get_attr("Depth With Door Open").value if product.get_attr("Depth With Door Open") else ""
     sound = product.get_attr("Sound Level").value if product.get_attr("Sound Level") else ""
 
+    # Auto-detect product type from Part_Desc (not hardcoded)
+    part_desc = (row.get("Part_Desc") or product.part_desc or "").lower()
+    product_name = "Product"  # generic default
+    item_type_abbr = "PRODUCT"
+    
+    # Detect product type from description
+    product_type_map = {
+        "dishwasher": ("Dishwasher", "DISHWASHER"),
+        "washer": ("Washer", "WASHER"),
+        "dryer": ("Dryer", "DRYER"),
+        "refrigerator": ("Refrigerator", "REFRIGERATOR"),
+        "freezer": ("Freezer", "FREEZER"),
+        "oven": ("Oven", "OVEN"),
+        "range": ("Range", "RANGE"),
+        "microwave": ("Microwave", "MICROWAVE"),
+        "cooktop": ("Cooktop", "COOKTOP"),
+        "hood": ("Hood", "HOOD"),
+        "faucet": ("Faucet", "FAUCET"),
+        "valve": ("Valve", "VALVE"),
+        "fitting": ("Fitting", "FITTING"),
+        "pipe": ("Pipe Fitting", "PIPE FITTING"),
+        "sanding": ("Sanding Disc", "SAND DISC"),
+        "disc": ("Disc", "DISC"),
+        "belt": ("Belt", "BELT"),
+        "blade": ("Blade", "BLADE"),
+        "drill": ("Drill", "DRILL"),
+        "saw": ("Saw", "SAW"),
+        "wrench": ("Wrench", "WRENCH"),
+        "wire": ("Wire", "WIRE"),
+        "cable": ("Cable", "CABLE"),
+        "switch": ("Switch", "SWITCH"),
+        "outlet": ("Outlet", "OUTLET"),
+        "breaker": ("Breaker", "BREAKER"),
+        "screw": ("Screw", "SCREW"),
+        "bolt": ("Bolt", "BOLT"),
+        "nut": ("Nut", "NUT"),
+        "hinge": ("Hinge", "HINGE"),
+        "bracket": ("Bracket", "BRACKET"),
+        "decking": ("Decking", "DECKING"),
+        "railing": ("Railing", "RAILING"),
+        "lumber": ("Lumber", "LUMBER"),
+    }
+    
+    for keyword, (p_name, p_abbr) in product_type_map.items():
+        if keyword in part_desc:
+            product_name = p_name
+            item_type_abbr = p_abbr
+            break
+    
+    # Also check classpath for product type
+    if product.classpath:
+        cp_lower = product.classpath.lower()
+        for keyword, (p_name, p_abbr) in product_type_map.items():
+            if keyword in cp_lower:
+                product_name = p_name
+                item_type_abbr = p_abbr
+                break
+
     ctx = {
         "manufacturer_name": _fmt(product.manufacturer_name),
         "brand_name": _fmt(product.brand_name),
-        "product_name": "Dishwasher",
+        "product_name": product_name,
         "mfg_part_num": product.mfg_part_num,
         "series": _fmt(series),
         "cycles": _fmt(cycles),
@@ -410,9 +499,23 @@ def _render_descriptions(product: Product, row: dict):
         "voltage_invoice": _phrase(voltage, "", "V"),
         "amps_invoice": _phrase(amps, "", "A"),
         
-        "item_type_abbr": "DISHWASHER",
+        "item_type_abbr": item_type_abbr,
         "mounting_abbr": "LEG" if mounting == "Leg" else "BLTLN" if mounting else "",
         "material_abbr": "SST" if material == "Stainless Steel" else "",
+        
+        # Faucet-specific context
+        "faucet_type": _fmt(product.get_attr("Faucet Type").value if product.get_attr("Faucet Type") else ""),
+        "finish_abbr": _fmt(product.get_attr("Finish").value if product.get_attr("Finish") else ""),
+        "flow_rate": _fmt(product.get_attr("Flow Rate").value if product.get_attr("Flow Rate") else ""),
+        "handles_phrase": _phrase(product.get_attr("Number of Handles").value if product.get_attr("Number of Handles") else "", ", ", " Handle"),
+        "finish_phrase": _phrase(product.get_attr("Finish").value if product.get_attr("Finish") else "", ", "),
+        "flow_rate_phrase": _phrase(product.get_attr("Flow Rate").value if product.get_attr("Flow Rate") else "", ", ", " GPM"),
+        
+        # Fitting-specific context
+        "fitting_type": _fmt(product.get_attr("Fitting Type").value if product.get_attr("Fitting Type") else ""),
+        "connection_phrase": _phrase(product.get_attr("Connection Type 1").value if product.get_attr("Connection Type 1") else "", ", "),
+        "pipe_size": _fmt(product.get_attr("Pipe Size").value if product.get_attr("Pipe Size") else ""),
+        "pressure_phrase": _phrase(product.get_attr("Maximum Pressure").value if product.get_attr("Maximum Pressure") else "", ", ", " PSI"),
     }
     
     depth_invoice = _phrase(depth, "", "IN")
