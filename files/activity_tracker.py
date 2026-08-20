@@ -9,8 +9,8 @@ from __future__ import annotations
 import time
 import threading
 import inspect
-from collections import defaultdict
-from typing import Optional
+import os
+import traceback
 
 
 class ActivityEvent:
@@ -25,8 +25,8 @@ class ActivityEvent:
         self.action = kw.get("action", "")
         self.detail = kw.get("detail", "")
         self.source = kw.get("source", "")
-        self.status = kw.get("status", "running")  # running | success | fail | skip
-        self.icon = kw.get("icon", "arrow")  # search | fetch | extract | normalize | validate | score | done | error | arrow
+        self.status = kw.get("status", "running")
+        self.icon = kw.get("icon", "arrow")
         self.meta = kw.get("meta", {})
 
     def to_dict(self):
@@ -44,15 +44,19 @@ class ActivityEvent:
 
 
 def _caller_source(skip: int = 1) -> str:
-    """Get file:line of the caller."""
-    frame = inspect.currentframe()
-    for _ in range(skip + 1):
-        frame = frame.f_back
+    """Get file:line of the caller. Never raises."""
+    try:
+        frame = inspect.currentframe()
         if frame is None:
             return ""
-    import os
-    fname = os.path.basename(frame.f_code.co_filename)
-    return f"{fname}:{frame.f_lineno}"
+        for _ in range(skip + 1):
+            frame = frame.f_back
+            if frame is None:
+                return ""
+        fname = os.path.basename(frame.f_code.co_filename)
+        return f"{fname}:{frame.f_lineno}"
+    except Exception:
+        return ""
 
 
 class ActivityTracker:
@@ -66,19 +70,27 @@ class ActivityTracker:
         self._lock = threading.Lock()
         self._max = max_events
         self._sequence = 0
+        self._emit_count = 0
+        self._error_count = 0
 
     def emit(self, **kw) -> ActivityEvent:
-        """Emit an activity event. Returns the event for chaining."""
-        if "source" not in kw or not kw["source"]:
-            kw["source"] = _caller_source(skip=2)
-        ev = ActivityEvent(**kw)
-        with self._lock:
-            self._sequence += 1
-            ev.meta["seq"] = self._sequence
-            self._events.append(ev)
-            if len(self._events) > self._max:
-                self._events = self._events[-self._max:]
-        return ev
+        """Emit an activity event. Returns the event for chaining.
+        Never raises — on error, increments error counter."""
+        try:
+            if "source" not in kw or not kw["source"]:
+                kw["source"] = _caller_source(skip=2)
+            ev = ActivityEvent(**kw)
+            with self._lock:
+                self._sequence += 1
+                ev.meta["seq"] = self._sequence
+                self._events.append(ev)
+                self._emit_count += 1
+                if len(self._events) > self._max:
+                    self._events = self._events[-self._max:]
+            return ev
+        except Exception:
+            self._error_count += 1
+            return None
 
     def get_since(self, last_seq: int = 0) -> list[dict]:
         """Return events with seq > last_seq."""
@@ -95,6 +107,17 @@ class ActivityTracker:
         with self._lock:
             self._events.clear()
             self._sequence = 0
+            self._emit_count = 0
+            self._error_count = 0
+
+    def stats(self) -> dict:
+        with self._lock:
+            return {
+                "total_events": len(self._events),
+                "sequence": self._sequence,
+                "emits": self._emit_count,
+                "errors": self._error_count,
+            }
 
 
 # ── Global singleton ──────────────────────────────────────────────────

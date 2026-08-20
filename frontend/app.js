@@ -381,7 +381,7 @@ function appendEvents(events) {
 }
 
 async function pollJobProgress(jobId) {
-    const pollInterval = 300;
+    const pollInterval = 200;
     allEvents = [];
     eventCount = 0;
     

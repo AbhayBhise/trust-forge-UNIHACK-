@@ -289,6 +289,12 @@ async def create_job(file: UploadFile = File(...)):
     # Create job and start background processing
     job_id = jobs.create_job(len(rows))
     provider = CompositeProvider()
+    tracker.clear()  # Fresh event stream for this job
+    tracker.emit(
+        mpn="", step="job_start", provider="Server",
+        action="started", detail=f"Job {job_id}: processing {len(rows)} rows with {MAX_WORKERS} workers",
+        icon="arrow", status="running",
+    )
     
     thread = threading.Thread(
         target=process_batch_background,
@@ -383,6 +389,18 @@ async def stream_job_progress(job_id: str):
 @app.get("/health")
 async def health():
     return {"status": "ok", "version": "1.0.0"}
+
+
+@app.get("/debug/tracker")
+async def debug_tracker():
+    """Debug endpoint to inspect tracker state."""
+    stats = tracker.stats()
+    recent = tracker.get_all()[-20:]
+    return {
+        "stats": stats,
+        "recent_events": recent,
+        "jobs_active": len(jobs.jobs),
+    }
 
 
 # Mount static files (API routes first, then static fallback)
