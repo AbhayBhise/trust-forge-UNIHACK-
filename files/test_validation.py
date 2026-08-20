@@ -8,12 +8,14 @@ class TestValidationRobustness(unittest.TestCase):
         self.product.identity = Identity(status="verified", matched_on="mpn")
         self.product.classpath = "Appliances"
         self.product.manufacturer_name = "TestMfg"
+        import config_appliances
+        self.product._cfg = config_appliances
 
     def test_wrong_units(self):
         attr = Attribute(attribute="Voltage Rating", value="120", uom="Hz", required=True)
         # Assuming we expect 'V'
         _validate_attribute(attr, self.product, "number", "V")
-        _score_confidence(attr)
+        _score_confidence(attr, self.product)
         
         self.assertEqual(attr.checks["unit_normalized"], False)
         # Should contain a failing rule for unit
@@ -26,7 +28,7 @@ class TestValidationRobustness(unittest.TestCase):
         attr = Attribute(attribute="Voltage Rating", value="120", uom="V", required=True)
         # No evidence attached
         _validate_attribute(attr, self.product, "number", "V")
-        _score_confidence(attr)
+        _score_confidence(attr, self.product)
         
         self.assertEqual(attr.checks["manufacturer_match"], False)
         self.assertTrue(attr.confidence < 1.0)
@@ -34,7 +36,7 @@ class TestValidationRobustness(unittest.TestCase):
     def test_missing_required_field(self):
         attr = Attribute(attribute="Voltage Rating", value=None, uom="V", required=True)
         _validate_attribute(attr, self.product, "number", "V")
-        _score_confidence(attr)
+        _score_confidence(attr, self.product)
         
         self.assertEqual(attr.status, "unknown")
         # Ensure it has a failure for the missing required field

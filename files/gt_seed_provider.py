@@ -135,5 +135,7 @@ class GroundTruthSeedProvider(EvidenceProvider):
             "_long_desc1":   (row.get("LONG_DESC1") or "").strip(),
             "_retail_desc":  (row.get("RETAIL_DESC") or "").strip(),
             "_marketing_desc": (row.get("MARKETING_DESCRIPTION") or "").strip(),
+            "source_url": GT_SOURCE_URL,
+            "source_tier": GT_SOURCE_TIER,
             "facts": facts,
         }

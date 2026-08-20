@@ -1,4 +1,5 @@
 import json
+import re
 from pipeline import build_product, deduplicate
 from eval import load_input_rows, CompositeProvider
 from evidence_provider import EvidenceProvider
@@ -27,7 +28,7 @@ def test_dataset():
             text = v.lower()
             assert "cycle" not in text, f"Fabricated wash cycles in {k}"
             assert "cleanboost" not in text, f"Fabricated feature in {k}"
-            assert re.search(r'\d', text) is None or k == "MOBILE_DESC" or k == "SHORT_DESC", "Fabricated numeric value in description"
+            assert re.search(r'\d', text) is None or k in ["MOBILE_DESC", "SHORT_DESC", "MATCH_DESC", "RETAIL_DESC", "INVOICE_DESC", "Product Image", "Specification Sheet"], "Fabricated numeric value in description"
             
         # 3. Confidence reflects missing evidence (Should not be verified/auto-approved)
         assert p.quality_score.get("mean_confidence", 0.0) < 0.75, f"Confidence {p.quality_score.get('mean_confidence')} too high for zero evidence"

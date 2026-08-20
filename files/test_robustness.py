@@ -10,6 +10,7 @@ class TestTemplateRobustness(unittest.TestCase):
         self.product.manufacturer_name = "TestMfg"
         self.product.brand_name = "TestBrand"
         self.product.identity = Identity(status="verified", matched_on="mpn")
+        self.product._cfg = cfg
         
         # Populate all attributes
         for label, dtype, uom, req in cfg.ATTRIBUTES:

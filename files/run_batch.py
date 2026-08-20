@@ -12,7 +12,7 @@ from pipeline import build_product, deduplicate
 from eval import CompositeProvider, load_input_rows
 
 WORKSPACE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-MAX_WORKERS = 8
+MAX_WORKERS = 20
 
 
 def process_row_safe(row, provider):

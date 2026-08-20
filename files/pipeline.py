@@ -14,7 +14,10 @@ from models import Product, Attribute, Identity, ValidationEntry, Evidence
 from evidence_provider import EvidenceProvider
 from normalizer import normalize_product_attributes, normalize_attribute_value
 from html_spec_extractor import SpecBlockExtractor
-import config_appliances as cfg
+from desc_extraction_provider import DescriptionExtractionProvider
+import config_appliances
+import config_faucets
+import config_fittings
 
 
 PLACEHOLDER_BRANDS = {"-- Unbranded --", "-- No Unilog Brand --", "-- No DIB Brand --"}
@@ -105,28 +108,47 @@ def build_product(row: dict, provider: EvidenceProvider) -> Product:
     if row.get("Classpath"):
         product.classpath = row["Classpath"]
         product.classpath_confidence = 1.0
-    elif "dishwasher" in part_desc:
-        product.classpath = cfg.CLASSPATH
-        product.classpath_confidence = 0.95
+
+    if product.classpath:
+        category = product.classpath.split(" > ")[1] if " > " in product.classpath else product.classpath
     else:
-        product.classpath = None
-        product.classpath_confidence = 0.0
+        category = getattr(product, '_category', 'Unknown')
+        
+    if "Faucet" in category or "Faucets" in category:
+        product._cfg = config_faucets
+    elif "Fitting" in category or "Fittings" in category or "Pipe" in category or "Plumbing" in category:
+        product._cfg = config_fittings
+    else:
+        product._cfg = config_appliances
 
     facts = evidence_bundle.get("facts", {}) if evidence_found else {}
 
     # ── Step 2a: Category-specific attributes (dishwasher config) ────
     existing_labels = set()
-    for label, dtype, uom_expected, required in cfg.ATTRIBUTES:
+    for label, dtype, uom_expected, required in product._cfg.ATTRIBUTES:
         attr = Attribute(attribute=label, required=required)
         if label == "Series" and evidence_found:
             attr.value = evidence_bundle.get("_series")
             attr.status = "verified" if attr.value else "unknown"
+            if evidence_bundle.get("source_url"):
+                from models import Evidence
+                attr.evidence.append(Evidence(
+                    source_url=evidence_bundle.get("source_url"),
+                    source_tier=evidence_bundle.get("source_tier", 0)
+                ))
+                attr.confidence = 100.0 if evidence_bundle.get("source_tier") == 5 else 80.0
         elif label in facts:
             value, uom, ev = facts[label]
             attr.value = value
             attr.uom = uom or uom_expected
             attr.evidence.append(ev)
             attr.status = "verified"
+            if ev and ev.source_tier == 5:
+                attr.confidence = 100.0
+            elif ev and ev.source_tier >= 3:
+                attr.confidence = 80.0
+            else:
+                attr.confidence = 60.0
         else:
             attr.status = "needs_review" if required else "unknown"
         product.attributes.append(attr)
@@ -166,14 +188,14 @@ def build_product(row: dict, provider: EvidenceProvider) -> Product:
     # ── Step 3: Validation ───────────────────────────────────────────
     for attr in product.attributes:
         label = attr.attribute
-        dtype = next((t for l, t, _, _ in cfg.ATTRIBUTES if l == label), "text")
-        uom_expected = next((u for l, _, u, _ in cfg.ATTRIBUTES if l == label), None)
-        required = next((r for l, _, _, r in cfg.ATTRIBUTES if l == label), False)
+        dtype = next((t for l, t, _, _ in product._cfg.ATTRIBUTES if l == label), "text")
+        uom_expected = next((u for l, _, u, _ in product._cfg.ATTRIBUTES if l == label), None)
+        required = next((r for l, _, _, r in product._cfg.ATTRIBUTES if l == label), False)
         _validate_attribute(attr, product, dtype, uom_expected)
 
     # ── Step 4: Confidence Scoring (enhanced) ────────────────────────
     for attr in product.attributes:
-        _score_confidence(attr)
+        _score_confidence(attr, product)
 
     _render_descriptions(product, row)
 
@@ -293,13 +315,13 @@ def _cross_validate_evidence(product: Product, evidence_bundle: dict):
             attr.checks["cross_validated"] = False
 
 
-def _score_confidence(attr: Attribute):
+def _score_confidence(attr: Attribute, product: Product):
     """
     Confidence scoring that works for both appliance (Tier 5) and generic (Tier 2) products.
     """
-    w = cfg.CONFIDENCE_WEIGHTS
+    w = product._cfg.CONFIDENCE_WEIGHTS
     checks = attr.checks
-    tier_weight = cfg.EVIDENCE_TIER_WEIGHTS.get(attr.evidence[0].source_tier, 0.0) if attr.evidence else 0.0
+    tier_weight = product._cfg.EVIDENCE_TIER_WEIGHTS.get(attr.evidence[0].source_tier, 0.0) if attr.evidence else 0.0
 
     score = (
         w["identity_verified"]   * int(bool(checks.get("identity_verified", False)))
@@ -322,19 +344,25 @@ def _score_confidence(attr: Attribute):
     # When multiple independent evidence sources agree on a value,
     # confidence increases (analogous to Paper 2's wrapper support).
     if checks.get("cross_validated", False):
-        score += cfg.CROSS_VALIDATION_BONUS
+        score += product._cfg.CROSS_VALIDATION_BONUS
 
     if attr.required and not attr.value:
-        score -= cfg.MISSING_REQUIRED_PENALTY
+        score -= product._cfg.MISSING_REQUIRED_PENALTY
 
     score = max(0.0, min(1.0, score))
+    if attr.evidence:
+        top_tier = max([ev.source_tier for ev in attr.evidence])
+        if top_tier == 5:
+            score = 1.0
+        elif top_tier == 4:
+            score = max(score, 0.95)
     attr.confidence = score
 
     if not attr.value:
         attr.status = "unknown"
-    elif score >= cfg.AUTO_APPROVE_THRESHOLD:
+    elif score >= product._cfg.AUTO_APPROVE_THRESHOLD:
         attr.status = "verified"
-    elif score >= cfg.NEEDS_REVIEW_THRESHOLD:
+    elif score >= product._cfg.NEEDS_REVIEW_THRESHOLD:
         attr.status = "needs_review"
     else:
         attr.status = "unknown"
@@ -392,7 +420,7 @@ def _render_descriptions(product: Product, row: dict):
     ctx["tail"] = depth_invoice or sound_invoice
 
     descriptions = {}
-    for field_name, template in cfg.TEMPLATES.items():
+    for field_name, template in product._cfg.TEMPLATES.items():
         try:
             text = template.format(**ctx)
             # Cleanup double spaces or dangling spaces
@@ -401,18 +429,18 @@ def _render_descriptions(product: Product, row: dict):
             text = ""
         if field_name == "INVOICE_DESC":
             text = text.upper()
-            if len(text) > cfg.INVOICE_DESC_MAX_LEN:
-                text = text[:cfg.INVOICE_DESC_MAX_LEN].strip()
-        elif field_name == "MOBILE_DESC" and len(text) > cfg.MOBILE_DESC_MAX_LEN:
-            text = text[:cfg.MOBILE_DESC_MAX_LEN].strip()
-        elif field_name == "MATCH_DESC" and len(text) > cfg.MATCH_DESC_MAX_LEN:
-            text = text[:cfg.MATCH_DESC_MAX_LEN].strip()
-        elif field_name == "SHORT_DESC" and len(text) > cfg.SHORT_DESC_MAX_LEN:
-            text = text[:cfg.SHORT_DESC_MAX_LEN].strip()
-        elif field_name == "LONG_DESC1" and len(text) > cfg.LONG_DESC1_MAX_LEN:
-            text = text[:cfg.LONG_DESC1_MAX_LEN].strip()
-        elif field_name == "RETAIL_DESC" and len(text) > cfg.RETAIL_DESC_MAX_LEN:
-            text = text[:cfg.RETAIL_DESC_MAX_LEN].strip()
+            if len(text) > product._cfg.INVOICE_DESC_MAX_LEN:
+                text = text[:product._cfg.INVOICE_DESC_MAX_LEN].strip()
+        elif field_name == "MOBILE_DESC" and len(text) > product._cfg.MOBILE_DESC_MAX_LEN:
+            text = text[:product._cfg.MOBILE_DESC_MAX_LEN].strip()
+        elif field_name == "MATCH_DESC" and len(text) > product._cfg.MATCH_DESC_MAX_LEN:
+            text = text[:product._cfg.MATCH_DESC_MAX_LEN].strip()
+        elif field_name == "SHORT_DESC" and len(text) > product._cfg.SHORT_DESC_MAX_LEN:
+            text = text[:product._cfg.SHORT_DESC_MAX_LEN].strip()
+        elif field_name == "LONG_DESC1" and len(text) > product._cfg.LONG_DESC1_MAX_LEN:
+            text = text[:product._cfg.LONG_DESC1_MAX_LEN].strip()
+        elif field_name == "RETAIL_DESC" and len(text) > product._cfg.RETAIL_DESC_MAX_LEN:
+            text = text[:product._cfg.RETAIL_DESC_MAX_LEN].strip()
         
         descriptions[field_name] = text
 

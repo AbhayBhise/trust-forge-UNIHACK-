@@ -24,6 +24,7 @@ from urllib.parse import quote_plus
 
 import requests
 from bs4 import BeautifulSoup
+from patchright.sync_api import sync_playwright
 
 from evidence_provider import EvidenceProvider
 from html_spec_extractor import SpecBlockExtractor
@@ -45,7 +46,7 @@ HEADERS = {
     "Accept-Language": "en-US,en;q=0.9",
 }
 TIMEOUT = 4
-MAX_TIME_PER_MPN = 5.0  # seconds — reduced from 8s for faster processing
+MAX_TIME_PER_MPN = 25.0  # seconds — increased to allow fetch_html to auto-click search results
 DELAY_BETWEEN_REQUESTS = 0.2  # seconds — reduced from 0.3s
 
 # ── Manufacturer search URLs ─────────────────────────────
@@ -57,9 +58,31 @@ SEARCH_SOURCES = [
     ("lg", "https://www.lg.com/us/search?query={mpn}"),
     ("kitchenaid", "https://www.kitchenaid.com/search.html?query={mpn}"),
     ("maytag", "https://www.maytag.com/search.html?query={mpn}"),
-    ("bosch", "https://www.bosch-home.com/us/search.html?query={mpn}"),
-    ("ge", "https://www.geappliances.com/search.htm?searchTerm={mpn}"),
+    ("bosch", "https://www.boschtools.com/us/en/search/?q={mpn}"),
+    ("ge", "https://www.geappliances.com/appliance/{mpn}"),
 ]
+
+BRAND_DOMAINS = {
+    "phillips lighting": "signify.com",
+    "milwaukee accessory": "milwaukeetool.com",
+    "boise cascade building materials": "bc.com",
+    "kichler lighting": "kichler.com",
+    "black & decker/dewlt": "dewalt.com",
+    "parksite": "parksite.com",
+    "freud inc": "freudtools.com",
+    "u s lumber": "uslumber.com",
+    "satco prod inc": "satco.com",
+    "lg electronics": "lg.com",
+    "makita usa inc": "makitatools.com",
+    "southwire/g turner": "southwire.com",
+    "festool usa": "festoolusa.com",
+    "leviton mfg co": "leviton.com",
+    "ge appliances": "geappliances.com",
+    "kreg tool company": "kregtool.com",
+    "u s tape company": "ustape.com",
+    "bosch": "boschtools.com",
+    "3m": "3m.com",
+}
 
 # ── Attribute extraction patterns (supplement html_spec_extractor) ──
 # These are targeted patterns for common appliance spec structures
@@ -184,8 +207,7 @@ class WebEvidenceProvider(EvidenceProvider):
 
     def __init__(self):
         self.spec_extractor = SpecBlockExtractor()
-        self.session = requests.Session()
-        self.session.headers.update(HEADERS)
+        # session is removed, using patchright
         self._cache = {}  # mpn -> evidence bundle (in-memory)
         self._last_request_time = 0.0
         self._load_cache()
@@ -215,7 +237,14 @@ class WebEvidenceProvider(EvidenceProvider):
             time.sleep(DELAY_BETWEEN_REQUESTS - elapsed)
         self._last_request_time = time.time()
 
+    def fetch_with_row(self, mfg_part_num: str, row: dict) -> dict:
+        brand = row.get("MANUFACTURER_NAME", row.get("Part_Manuf", ""))
+        return self._fetch_internal(mfg_part_num, brand)
+
     def fetch(self, mfg_part_num: str) -> dict:
+        return self._fetch_internal(mfg_part_num, "")
+
+    def _fetch_internal(self, mfg_part_num: str, brand: str) -> dict:
         """
         Fetch real product evidence for an MPN from the web.
         
@@ -226,50 +255,73 @@ class WebEvidenceProvider(EvidenceProvider):
             return self._cache[mfg_part_num]
 
         mpn = mfg_part_num.strip().upper()
-        log.info(f"Web evidence fetch for MPN: {mpn}")
+        log.info(f"Web evidence fetch for MPN: {mpn} (Brand: {brand})")
         start_time = time.time()
+        
+        urls_to_try = []
+        brand_lower = brand.lower() if brand else ""
+        
+        # DDGS search is completely disabled because the network sandbox blocks it, causing a 10s timeout per item
+        # try:
+        #     from ddgs import DDGS
+        #     query = f"{brand} {mpn} specifications" if brand else f"{mpn} specifications"
+        #     with DDGS() as ddgs:
+        #         results = list(ddgs.text(query, backend="lite", max_results=2))
+        #         for idx, r in enumerate(results):
+        #             href = r.get("href")
+        #             if href:
+        #                 urls_to_try.append((f"ddg_result_{idx}", href))
+        # except Exception as e:
+        #     log.warning(f"DDGS search failed: {e}")
+            
+        # Fallback to direct URL constructs if DDGS returned nothing
+        if not urls_to_try:
+            if brand_lower in BRAND_DOMAINS:
+                domain = BRAND_DOMAINS[brand_lower]
+                urls_to_try.append((f"{brand}_search", f"https://www.{domain}/search?q={quote_plus(mpn)}"))
+                urls_to_try.append((f"{brand}_search_alt", f"https://www.{domain}/products/{quote_plus(mpn)}"))
+            else:
+                for src_name, url_template in SEARCH_SOURCES:
+                    urls_to_try.append((src_name, url_template.format(mpn=quote_plus(mpn))))
 
         # Try each search source until we find a product page
-        for source_name, url_template in SEARCH_SOURCES:
-            # Check per-MPN timeout
+        for source_name, search_url in urls_to_try:
             if time.time() - start_time > MAX_TIME_PER_MPN:
                 log.info(f"  Timeout ({MAX_TIME_PER_MPN}s) reached for {mpn}")
                 break
                 
+            self._throttle()
+            
             try:
-                search_url = url_template.format(mpn=quote_plus(mpn))
-                self._throttle()
-                
-                resp = self.session.get(search_url, timeout=TIMEOUT, allow_redirects=True)
-                if resp.status_code != 200:
-                    log.debug(f"  {source_name}: HTTP {resp.status_code}")
-                    continue
-
-                html = resp.text
+                # Fetch from our persistent Playwright server to avoid massive process spawning overhead
+                import requests
+                params = {"url": search_url, "mpn": mpn}
+                resp = requests.get("http://127.0.0.1:8001/fetch", params=params, timeout=30)
+                if resp.status_code == 200:
+                    html = resp.json().get("html", "")
+                else:
+                    html = ""
+                real_url = search_url
+                    
                 if len(html) < 500:
                     log.debug(f"  {source_name}: page too small ({len(html)} bytes)")
                     continue
 
-                # Check if the page actually contains our MPN
                 if mpn.lower() not in html.lower():
                     log.debug(f"  {source_name}: MPN not found in page content")
                     continue
 
-                # Found a relevant page — extract specs
-                bundle = self._extract_from_html(html, mpn, source_name, resp.url)
+                bundle = self._extract_from_html(html, mpn, source_name, real_url)
                 if bundle:
                     log.info(f"  {source_name}: extracted {len(bundle.get('facts', {}))} attributes")
                     self._cache[mfg_part_num] = bundle
-                    self._save_cache()  # Persist to disk for next run
+                    self._save_cache()
                     return bundle
                 else:
                     log.debug(f"  {source_name}: no specs extracted")
 
-            except requests.RequestException as e:
-                log.debug(f"  {source_name}: request failed: {e}")
-                continue
             except Exception as e:
-                log.debug(f"  {source_name}: extraction failed: {e}")
+                log.debug(f"  {source_name}: fetch/extract failed: {e}")
                 continue
 
         log.info(f"  No evidence found for {mpn}")
@@ -312,7 +364,7 @@ class WebEvidenceProvider(EvidenceProvider):
         for pdf_url in pdf_urls[:2]:  # Try top 2 PDFs
             try:
                 self._throttle()
-                pdf_resp = self.session.get(pdf_url, timeout=TIMEOUT)
+                pdf_resp = requests.get(pdf_url, headers=HEADERS, timeout=TIMEOUT)
                 if pdf_resp.status_code == 200 and len(pdf_resp.content) > 1000:
                     import fitz  # PyMuPDF
                     doc = fitz.open(stream=pdf_resp.content, filetype="pdf")

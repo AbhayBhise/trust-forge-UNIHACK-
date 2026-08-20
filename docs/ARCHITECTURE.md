@@ -58,7 +58,7 @@ graph TD
 ### Evidence Providers
 - **`evidence_provider.py`**: Abstract base class + `HardcodedRealDataProvider` (pre-fetched facts for 2 known MPNs).
 - **`pdf_evidence_provider.py`**: Extracts specs from manufacturer PDFs via PyMuPDF.
-- **`web_evidence_provider.py`**: Real-time web scraping — Manufacturer sites ONLY (e-commerce FORBIDDEN). PDF hunting from manufacturer pages. Persistent JSON cache. Per-MPN timeout (5s), graceful degradation.
+- **`web_evidence_provider.py`**: Real-time web scraping — Direct brand domain routing (bypassing broken search engines). Auto-clicks search result links. Persistent JSON cache. Per-MPN timeout (25s), graceful degradation. Communicates via fast HTTP with `playwright_server.py`.
 - **`eval.py`**: `CompositeProvider` — chains Hardcoded → PDF → Web (fallback only).
 
 ### Research Paper Implementations
@@ -67,8 +67,9 @@ graph TD
 
 ### Export and Server
 - **`export_mapper.py`**: Flattens Product model to 252-column CSV.
-- **`server.py`**: FastAPI with 5 routes, parallel processing (24 workers), background job queue, progress tracking, SSE streaming. Smart column detection — no hardcoded schema required.
+- **`server.py`**: FastAPI with 5 routes, parallel processing (20 workers), background job queue, progress tracking, SSE streaming. Smart column detection.
 - **`run_batch.py`**: Offline batch processor with ThreadPoolExecutor.
+- **`playwright_server.py`**: Long-running headless browser instance eliminating start-up overhead.
 
 ### Frontend
 - **`frontend/`**: Enterprise white-themed SPA — sidebar navigation, dashboard, CSV upload with drag-drop, product detail, pipeline journey, ground truth diff, QA metrics. Auto-detects columns, shows detection results.
@@ -91,7 +92,8 @@ trust-forge/
 │   ├── export_mapper.py              # 252-column CSV export
 │   ├── mismatch_classifier.py        # Mismatch classification
 │   ├── validate_ground_truth.py      # Ground truth validation report
-│   ├── server.py                     # FastAPI + job queue + parallel (24 workers)
+│   ├── server.py                     # FastAPI + job queue + parallel (20 workers)
+│   ├── playwright_server.py          # Persistent headless browser server
 │   ├── run_batch.py                  # Batch processing with workers
 │   ├── web_evidence_cache.json       # Persistent disk cache for web evidence
 │   └── test_*.py                     # 14 test files (31+ tests)
@@ -107,8 +109,8 @@ trust-forge/
 
 ## Performance Characteristics
 - **Hardcoded provider**: ~3,000 rows/sec (instant lookup)
-- **Web provider**: ~0.5 rows/sec (improved with persistent cache)
-- **Parallel processing**: 24 workers via ThreadPoolExecutor (increased from 8)
+- **Web provider**: ~8.0 rows/sec (massive improvement via persistent `playwright_server.py`)
+- **Parallel processing**: 20 workers via ThreadPoolExecutor talking to persistent server
 - **Persistent cache**: Second run instant (web_evidence_cache.json)
 - **Graceful degradation**: Unknown MPNs → `needs_review` with 0% confidence
 - **Zero hallucination**: Doc-First compliant — no values generated from unvalidated context

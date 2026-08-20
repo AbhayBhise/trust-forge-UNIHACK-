@@ -32,7 +32,7 @@ from column_detector import detect_columns, map_row, detect_and_report
 # ── Config ──────────────────────────────────────────────────────────
 MAX_ROWS_PER_BATCH = 10000  # No practical limit for production
 TIMEOUT_SECONDS = 8.0
-MAX_WORKERS = 24  # Increased from 8 for faster parallel processing
+MAX_WORKERS = 20  # Increased for fast HTTP playwright server
 PROGRESS_UPDATE_INTERVAL = 0.1  # seconds
 
 def get_headers():

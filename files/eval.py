@@ -4,8 +4,10 @@ Lightweight evaluation and provider composition.
 Evidence retrieval chain (in priority order):
 1. GroundTruthSeedProvider  — Unilog's verified GT CSV (Tier 5)
 2. WebEvidenceProvider      — live manufacturer page scraping (Tier 3)
-3. PDFEvidenceProvider      — spec sheet PDFs (Tier 4-5)
-4. DescriptionExtractionProvider — Doc-First from Part_Desc (Tier 2)
+2. AgenticEvidenceProvider  — LLM-based web research
+3. WebEvidenceProvider      — live manufacturer page scraping (Tier 3)
+4. PDFEvidenceProvider      — spec sheet PDFs (Tier 4-5)
+5. DescriptionExtractionProvider — Doc-First from Part_Desc (Tier 2)
 """
 import csv
 import json
@@ -15,6 +17,7 @@ from pdf_evidence_provider import PDFEvidenceProvider
 from web_evidence_provider import WebEvidenceProvider
 from gt_seed_provider import GroundTruthSeedProvider
 from desc_extraction_provider import DescriptionExtractionProvider
+from agentic_provider import AgenticEvidenceProvider
 from html_spec_extractor import SpecBlockExtractor
 import os
 
@@ -28,15 +31,17 @@ class CompositeProvider(EvidenceProvider):
     Retrieval chain (in priority order):
     1. GroundTruthSeedProvider      — Unilog's verified GT file (Tier 5, instant)
     2. WebEvidenceProvider          — live manufacturer page scraping (Tier 3)
-    3. PDFEvidenceProvider          — spec sheet PDFs (Tier 4-5)
-    4. DescriptionExtractionProvider— Doc-First from Part_Desc (Tier 2, universal)
 
-    Every row gets at least Tier-2 evidence from the description field.
     Known GT rows get Tier-5 evidence instantly.
     """
     def __init__(self, enable_web=True):
         self.gt_seed = GroundTruthSeedProvider()
         self.desc_extractor = DescriptionExtractionProvider()
+        self.providers = []
+        # 3. Old Web Scraper (fallback)
+        self.providers.append(WebEvidenceProvider())
+        
+        # 4. Old PDF Scraper (fallback)
         self.pdf = PDFEvidenceProvider()
         self.web = WebEvidenceProvider() if enable_web else None
         self.html_extractor = SpecBlockExtractor()
@@ -100,7 +105,7 @@ def run():
     gt_rows = load_ground_truth()
     provider = CompositeProvider()
 
-    known_mpns = set(provider._DATA.keys())
+    known_mpns = set(provider.gt_seed._db.keys())
     target_rows = [r for r in input_rows if r["Mfg_Part_Num"] in known_mpns]
 
     unique_rows, dup_map = deduplicate(target_rows)
