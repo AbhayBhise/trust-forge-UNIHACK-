@@ -15,6 +15,7 @@ import requests
 from typing import Optional
 from evidence_provider import EvidenceProvider
 from models import Evidence
+from activity_tracker import tracker
 
 log = logging.getLogger(__name__)
 
@@ -97,36 +98,87 @@ class PDFEvidenceProvider(EvidenceProvider):
     def fetch(self, mfg_part_num: str) -> dict:
         """Fetch evidence from PDF spec sheets for any MPN."""
         if mfg_part_num in self._cache:
+            tracker.emit(
+                mpn=mfg_part_num, step="pdf_fetch", provider="PDFEvidenceProvider",
+                action="cache_hit", detail=f"PDF cache hit for {mfg_part_num}",
+                icon="done", status="success",
+            )
             return self._cache[mfg_part_num]
         
         mpn = mfg_part_num.strip()
         
         # Try to find and parse a local PDF first (if one exists)
+        tracker.emit(
+            mpn=mfg_part_num, step="pdf_fetch", provider="PDFEvidenceProvider",
+            action="searching", detail=f"Searching for local PDF matching {mpn}...",
+            icon="search", status="running",
+        )
         local_pdf = self._find_local_pdf(mpn)
         if local_pdf:
+            tracker.emit(
+                mpn=mfg_part_num, step="pdf_fetch", provider="PDFEvidenceProvider",
+                action="found", detail=f"Local PDF found: {os.path.basename(local_pdf)}",
+                icon="fetch", status="success",
+            )
             result = self._extract_from_pdf_path(local_pdf, mpn)
             if result:
                 self._cache[mfg_part_num] = result
+                tracker.emit(
+                    mpn=mfg_part_num, step="pdf_fetch", provider="PDFEvidenceProvider",
+                    action="done", detail=f"Extracted {len(result.get('facts', {}))} attributes from local PDF",
+                    icon="done", status="success",
+                )
                 return result
         
         # Try to fetch PDFs from known manufacturer URLs
-        for pattern in PDF_SEARCH_PATTERNS:
+        for i, pattern in enumerate(PDF_SEARCH_PATTERNS):
             try:
                 url = pattern.format(mpn=mpn)
+                tracker.emit(
+                    mpn=mfg_part_num, step="pdf_fetch", provider="PDFEvidenceProvider",
+                    action="fetching", detail=f"Trying PDF URL {i+1}/{len(PDF_SEARCH_PATTERNS)}: {url[:70]}...",
+                    icon="fetch", status="running",
+                )
                 resp = requests.get(url, timeout=10, headers={
                     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/125.0.0.0"
                 })
                 if resp.status_code == 200 and len(resp.content) > 1000:
                     content_type = resp.headers.get("content-type", "")
                     if "pdf" in content_type or resp.content[:4] == b"%PDF":
+                        tracker.emit(
+                            mpn=mfg_part_num, step="pdf_fetch", provider="PDFEvidenceProvider",
+                            action="extracting", detail=f"PDF downloaded ({len(resp.content)} bytes) — extracting specs...",
+                            icon="extract", status="running",
+                        )
                         result = self._extract_from_pdf_bytes(resp.content, mpn, url)
                         if result:
                             self._cache[mfg_part_num] = result
+                            tracker.emit(
+                                mpn=mfg_part_num, step="pdf_fetch", provider="PDFEvidenceProvider",
+                                action="done", detail=f"Extracted {len(result.get('facts', {}))} attributes from {url[:60]}",
+                                icon="done", status="success",
+                            )
                             return result
+                else:
+                    tracker.emit(
+                        mpn=mfg_part_num, step="pdf_fetch", provider="PDFEvidenceProvider",
+                        action="skip", detail=f"URL returned {resp.status_code} or too small — skipping",
+                        icon="arrow", status="skip",
+                    )
             except Exception as e:
+                tracker.emit(
+                    mpn=mfg_part_num, step="pdf_fetch", provider="PDFEvidenceProvider",
+                    action="error", detail=f"PDF fetch failed: {str(e)[:50]}",
+                    icon="error", status="fail",
+                )
                 log.debug(f"PDF fetch failed for {url}: {e}")
                 continue
         
+        tracker.emit(
+            mpn=mfg_part_num, step="pdf_fetch", provider="PDFEvidenceProvider",
+            action="exhausted", detail=f"No PDF found for {mpn} across {len(PDF_SEARCH_PATTERNS)} URLs",
+            icon="error", status="fail",
+        )
         return {}
     
     def _find_local_pdf(self, mpn: str) -> Optional[str]:

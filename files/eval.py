@@ -18,6 +18,7 @@ from web_evidence_provider import WebEvidenceProvider
 from gt_seed_provider import GroundTruthSeedProvider
 from desc_extraction_provider import DescriptionExtractionProvider
 from html_spec_extractor import SpecBlockExtractor
+from activity_tracker import tracker
 import os
 
 WORKSPACE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -50,34 +51,93 @@ class CompositeProvider(EvidenceProvider):
     def fetch_with_row(self, mfg_part_num: str, row: dict) -> dict:
         """Full fetch with row context for description extraction."""
         # 1. GT seed — Tier-5 verified data (simulates production verified DB)
+        tracker.emit(
+            mpn=mfg_part_num, step="evidence_retrieval", provider="GroundTruthSeedProvider",
+            action="checking", detail=f"Checking GT database for {mfg_part_num}",
+            icon="search", status="running",
+        )
         primary = self.gt_seed.fetch(mfg_part_num)
         if primary:
+            n_facts = len(primary.get("facts", {}))
+            tracker.emit(
+                mpn=mfg_part_num, step="evidence_retrieval", provider="GroundTruthSeedProvider",
+                action="found", detail=f"GT match found — {n_facts} attributes from verified database",
+                icon="done", status="success",
+            )
             return primary
+        tracker.emit(
+            mpn=mfg_part_num, step="evidence_retrieval", provider="GroundTruthSeedProvider",
+            action="miss", detail=f"No GT match for {mfg_part_num} — trying web...",
+            icon="arrow", status="skip",
+        )
 
         # 2. Web scraping — real manufacturer page
         if self.web:
+            tracker.emit(
+                mpn=mfg_part_num, step="evidence_retrieval", provider="WebEvidenceProvider",
+                action="searching", detail=f"Searching manufacturer sites for {mfg_part_num}...",
+                icon="search", status="running",
+            )
             web_result = self.web.fetch(mfg_part_num)
             if web_result:
+                n_facts = len(web_result.get("facts", {}))
+                tracker.emit(
+                    mpn=mfg_part_num, step="evidence_retrieval", provider="WebEvidenceProvider",
+                    action="found", detail=f"Web evidence: {n_facts} attributes from {web_result.get('_mfr_url', 'manufacturer page')}",
+                    icon="done", status="success",
+                )
                 # Merge with desc extraction for extra fields
                 desc_result = self.desc_extractor.fetch_from_row(row)
                 if desc_result:
-                    # Web takes priority but desc fills gaps
                     merged = dict(desc_result)
                     merged.update(web_result)
-                    # Merge facts (desc fills what web missed)
                     merged_facts = dict(desc_result.get("facts", {}))
                     merged_facts.update(web_result.get("facts", {}))
                     merged["facts"] = merged_facts
                     return merged
                 return web_result
+            tracker.emit(
+                mpn=mfg_part_num, step="evidence_retrieval", provider="WebEvidenceProvider",
+                action="miss", detail=f"No web evidence found for {mfg_part_num} — trying PDF...",
+                icon="arrow", status="skip",
+            )
 
         # 3. PDF provider — real spec sheet extraction
+        tracker.emit(
+            mpn=mfg_part_num, step="evidence_retrieval", provider="PDFEvidenceProvider",
+            action="searching", detail=f"Searching PDF spec sheets for {mfg_part_num}...",
+            icon="fetch", status="running",
+        )
         pdf_result = self.pdf.fetch(mfg_part_num)
         if pdf_result:
+            n_facts = len(pdf_result.get("facts", {}))
+            tracker.emit(
+                mpn=mfg_part_num, step="evidence_retrieval", provider="PDFEvidenceProvider",
+                action="found", detail=f"PDF evidence: {n_facts} attributes extracted",
+                icon="done", status="success",
+            )
             return pdf_result
+        tracker.emit(
+            mpn=mfg_part_num, step="evidence_retrieval", provider="PDFEvidenceProvider",
+            action="miss", detail=f"No PDF found for {mfg_part_num} — falling back to description",
+            icon="arrow", status="skip",
+        )
 
         # 4. Description extraction — Tier-2, works for ALL rows
-        return self.desc_extractor.fetch_from_row(row)
+        tracker.emit(
+            mpn=mfg_part_num, step="evidence_retrieval", provider="DescriptionExtractionProvider",
+            action="extracting", detail=f"Extracting attributes from Part_Desc for {mfg_part_num}",
+            icon="extract", status="running",
+        )
+        desc_result = self.desc_extractor.fetch_from_row(row)
+        if desc_result:
+            n_facts = len(desc_result.get("facts", {}))
+            tracker.emit(
+                mpn=mfg_part_num, step="evidence_retrieval", provider="DescriptionExtractionProvider",
+                action="done", detail=f"Description extraction: {n_facts} attributes from Part_Desc",
+                icon="done", status="success",
+            )
+        return desc_result
 
     def fetch(self, mfg_part_num: str) -> dict:
         """Backwards-compatible fetch — uses cached row if available."""

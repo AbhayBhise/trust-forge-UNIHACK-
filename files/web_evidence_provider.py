@@ -29,6 +29,7 @@ from patchright.sync_api import sync_playwright
 from evidence_provider import EvidenceProvider
 from html_spec_extractor import SpecBlockExtractor
 from models import Evidence
+from activity_tracker import tracker
 
 log = logging.getLogger(__name__)
 
@@ -393,6 +394,11 @@ class WebEvidenceProvider(EvidenceProvider):
         Enforces MAX_TIME_PER_MPN to prevent hanging on slow sites.
         """
         if mfg_part_num in self._cache:
+            tracker.emit(
+                mpn=mfg_part_num, step="web_fetch", provider="WebEvidenceProvider",
+                action="cache_hit", detail=f"Cache hit for {mfg_part_num} — skipping web fetch",
+                icon="done", status="success",
+            )
             return self._cache[mfg_part_num]
 
         mpn = mfg_part_num.strip().upper()
@@ -403,38 +409,44 @@ class WebEvidenceProvider(EvidenceProvider):
         brand_lower = brand.lower() if brand else ""
         brand_lower = re.sub(r'\s*\([^)]*\)', '', brand_lower).strip()
         
-        # DDGS search is completely disabled because the network sandbox blocks it, causing a 10s timeout per item
-        # try:
-        #     from ddgs import DDGS
-        #     query = f"{brand} {mpn} specifications" if brand else f"{mpn} specifications"
-        #     with DDGS() as ddgs:
-        #         results = list(ddgs.text(query, backend="lite", max_results=2))
-        #         for idx, r in enumerate(results):
-        #             href = r.get("href")
-        #             if href:
-        #                 urls_to_try.append((f"ddg_result_{idx}", href))
-        # except Exception as e:
-        #     log.warning(f"DDGS search failed: {e}")
-            
-        # Fallback to direct URL constructs if DDGS returned nothing
         if not urls_to_try:
             if brand_lower in BRAND_DOMAINS:
                 domain = BRAND_DOMAINS[brand_lower]
                 urls_to_try.append((f"{brand}_search", f"https://www.{domain}/search?q={quote_plus(mpn)}"))
                 urls_to_try.append((f"{brand}_search_alt", f"https://www.{domain}/products/{quote_plus(mpn)}"))
+                tracker.emit(
+                    mpn=mfg_part_num, step="web_fetch", provider="WebEvidenceProvider",
+                    action="targeted", detail=f"Brand '{brand}' mapped to {domain} — trying direct URLs",
+                    icon="search", status="running",
+                )
             else:
                 for src_name, url_template in SEARCH_SOURCES:
                     urls_to_try.append((src_name, url_template.format(mpn=quote_plus(mpn))))
+                tracker.emit(
+                    mpn=mfg_part_num, step="web_fetch", provider="WebEvidenceProvider",
+                    action="broad_search", detail=f"Unknown brand — scanning {len(urls_to_try)} manufacturer sites",
+                    icon="search", status="running",
+                )
 
         # Try each search source until we find a product page
         for source_name, search_url in urls_to_try:
             if time.time() - start_time > MAX_TIME_PER_MPN:
+                tracker.emit(
+                    mpn=mfg_part_num, step="web_fetch", provider="WebEvidenceProvider",
+                    action="timeout", detail=f"Timeout ({MAX_TIME_PER_MPN}s) reached after trying {source_name}",
+                    icon="error", status="fail",
+                )
                 log.info(f"  Timeout ({MAX_TIME_PER_MPN}s) reached for {mpn}")
                 break
                 
             self._throttle()
             
             try:
+                tracker.emit(
+                    mpn=mfg_part_num, step="web_fetch", provider="WebEvidenceProvider",
+                    action="fetching", detail=f"Fetching {search_url[:80]}...",
+                    icon="fetch", status="running",
+                )
                 # Fetch from our persistent Playwright server to avoid massive process spawning overhead
                 import requests
                 params = {"url": search_url, "mpn": mpn}
@@ -449,30 +461,71 @@ class WebEvidenceProvider(EvidenceProvider):
                     
                 is_search_url = "search" in search_url.lower() or "query" in search_url.lower() or "?q=" in search_url.lower()
                 if is_search_url and real_url == search_url:
+                    tracker.emit(
+                        mpn=mfg_part_num, step="web_fetch", provider="WebEvidenceProvider",
+                        action="skip", detail=f"{source_name}: still on search page — skipping",
+                        icon="arrow", status="skip",
+                    )
                     log.debug(f"  {source_name}: failed to navigate to product page (still on search page)")
                     continue
 
                 if len(html) < 500:
+                    tracker.emit(
+                        mpn=mfg_part_num, step="web_fetch", provider="WebEvidenceProvider",
+                        action="skip", detail=f"{source_name}: page too small ({len(html)} bytes)",
+                        icon="arrow", status="skip",
+                    )
                     log.debug(f"  {source_name}: page too small ({len(html)} bytes)")
                     continue
 
                 if mpn.lower() not in html.lower():
+                    tracker.emit(
+                        mpn=mfg_part_num, step="web_fetch", provider="WebEvidenceProvider",
+                        action="skip", detail=f"{source_name}: MPN not found in page content",
+                        icon="arrow", status="skip",
+                    )
                     log.debug(f"  {source_name}: MPN not found in page content")
                     continue
 
+                tracker.emit(
+                    mpn=mfg_part_num, step="web_fetch", provider="WebEvidenceProvider",
+                    action="extracting", detail=f"{source_name}: MPN found — extracting specs...",
+                    icon="extract", status="running",
+                )
                 bundle = self._extract_from_html(html, mpn, source_name, real_url)
                 if bundle:
-                    log.info(f"  {source_name}: extracted {len(bundle.get('facts', {}))} attributes")
+                    n_facts = len(bundle.get('facts', {}))
+                    tracker.emit(
+                        mpn=mfg_part_num, step="web_fetch", provider="WebEvidenceProvider",
+                        action="found", detail=f"{source_name}: {n_facts} attributes extracted from {real_url[:60]}",
+                        icon="done", status="success",
+                    )
+                    log.info(f"  {source_name}: extracted {n_facts} attributes")
                     self._cache[mfg_part_num] = bundle
                     self._save_cache()
                     return bundle
                 else:
+                    tracker.emit(
+                        mpn=mfg_part_num, step="web_fetch", provider="WebEvidenceProvider",
+                        action="skip", detail=f"{source_name}: no specs extracted from page",
+                        icon="arrow", status="skip",
+                    )
                     log.debug(f"  {source_name}: no specs extracted")
 
             except Exception as e:
+                tracker.emit(
+                    mpn=mfg_part_num, step="web_fetch", provider="WebEvidenceProvider",
+                    action="error", detail=f"{source_name}: fetch failed — {str(e)[:60]}",
+                    icon="error", status="fail",
+                )
                 log.debug(f"  {source_name}: fetch/extract failed: {e}")
                 continue
 
+        tracker.emit(
+            mpn=mfg_part_num, step="web_fetch", provider="WebEvidenceProvider",
+            action="exhausted", detail=f"All {len(urls_to_try)} sources exhausted for {mpn}",
+            icon="error", status="fail",
+        )
         log.info(f"  No evidence found for {mpn}")
         return {}
 

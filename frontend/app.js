@@ -180,13 +180,13 @@ function toggleTableFull() {
 /* ── Upload / Live Demo ───────────────────────────────────────────── */
 function renderUpload() {
     return `
-        <div class="card" style="max-width:640px;margin:0 auto">
+        <div class="card" style="max-width:900px;margin:0 auto">
             <div class="card-header">
                 <div class="card-title">Process a CSV File</div>
             </div>
             <p style="color:var(--gray-500);font-size:0.875rem;margin-bottom:1.5rem">
                 Upload any CSV with product data. The system auto-detects columns (MPN, manufacturer, brand, description)
-                regardless of naming. Large datasets (1000+ rows) are processed in the background with parallel workers.
+                regardless of naming. Watch the real-time activity feed to see every action the pipeline takes.
             </p>
             <div id="upload-zone" class="upload-zone" onclick="document.getElementById('csv-file').click()"
                  ondragover="event.preventDefault();this.classList.add('dragover')"
@@ -201,18 +201,27 @@ function renderUpload() {
             <div id="column-detection" style="display:none;margin-top:1rem"></div>
 
             <div id="upload-loading" style="display:none">
-                <div class="loading-overlay">
-                    <div class="spinner"></div>
-                    <div style="font-weight:600;color:var(--gray-800)">Processing products...</div>
-                    <div id="upload-progress-text" style="font-size:0.875rem;color:var(--gray-500)">Starting...</div>
-                    <div class="progress-bar" style="width:300px;margin-top:0.5rem">
+                <div style="margin-top:1rem">
+                    <div style="display:flex;align-items:center;gap:1rem;margin-bottom:1rem">
+                        <div class="spinner" style="width:20px;height:20px;border-width:2px"></div>
+                        <div>
+                            <div id="upload-progress-text" style="font-weight:600;color:var(--gray-800)">Starting...</div>
+                            <div id="upload-stats" style="font-size:0.8125rem;color:var(--gray-500)"></div>
+                        </div>
+                        <div style="margin-left:auto;text-align:right">
+                            <div id="upload-pct" style="font-size:1.5rem;font-weight:700;color:var(--primary)">0%</div>
+                        </div>
+                    </div>
+                    <div class="progress-bar" style="width:100%;margin-bottom:1rem">
                         <div id="upload-progress-bar" class="progress-fill blue" style="width:0%"></div>
                     </div>
-                    <div id="upload-stats" style="font-size:0.8125rem;color:var(--gray-400);margin-top:0.5rem"></div>
-                    
-                    <div style="margin-top:1.5rem;background:#1e1e1e;color:#00ff00;padding:0.75rem;font-family:monospace;font-size:0.75rem;border-radius:6px;height:100px;overflow:hidden;text-align:left;width:100%;max-width:450px;margin-left:auto;margin-right:auto;box-shadow:inset 0 2px 4px rgba(0,0,0,0.5);">
-                        <div style="color:#888;margin-bottom:0.25rem;border-bottom:1px solid #333;padding-bottom:0.25rem;">Live Extraction Log</div>
-                        <div id="activity-content"></div>
+
+                    <div class="activity-feed" id="activity-feed">
+                        <div class="activity-feed-header">
+                            <span class="activity-feed-title">Live Pipeline Activity</span>
+                            <span class="activity-feed-count" id="event-count">0 events</span>
+                        </div>
+                        <div class="activity-feed-body" id="activity-body"></div>
                     </div>
                 </div>
             </div>
@@ -286,8 +295,95 @@ async function uploadCSV(file) {
     }
 }
 
+const EVENT_ICONS = {
+    search: '&#128269;',   // magnifying glass
+    fetch: '&#8615;',      // download
+    extract: '&#9881;',    // gear
+    normalize: '&#8644;',  // exchange
+    validate: '&#10003;',  // checkmark
+    score: '&#9733;',      // star
+    done: '&#10003;',      // checkmark
+    error: '&#10007;',     // X
+    arrow: '&#8594;',      // right arrow
+};
+
+const STEP_COLORS = {
+    evidence_retrieval: '#2563eb',
+    web_fetch: '#0891b2',
+    pdf_fetch: '#7c3aed',
+    desc_extraction: '#059669',
+    identity_resolution: '#d97706',
+    category_detection: '#6366f1',
+    normalization: '#ec4899',
+    validation: '#f59e0b',
+    confidence_scoring: '#8b5cf6',
+    description_generation: '#10b981',
+    complete: '#059669',
+};
+
+const STATUS_STYLES = {
+    success: { bg: '#ecfdf5', color: '#059669', border: '#a7f3d0' },
+    fail:    { bg: '#fef2f2', color: '#dc2626', border: '#fecaca' },
+    running: { bg: '#eff6ff', color: '#2563eb', border: '#bfdbfe' },
+    skip:    { bg: '#f9fafb', color: '#6b7280', border: '#e5e7eb' },
+};
+
+let allEvents = [];
+let eventCount = 0;
+
+function renderEvent(ev) {
+    const icon = EVENT_ICONS[ev.icon] || '&#8594;';
+    const stepColor = STEP_COLORS[ev.step] || '#6b7280';
+    const st = STATUS_STYLES[ev.status] || STATUS_STYLES.skip;
+    const time = new Date(ev.timestamp * 1000).toLocaleTimeString();
+    const mpnShort = ev.mpn ? ev.mpn.substring(0, 12) : '';
+
+    return `<div class="activity-event" style="border-left:3px solid ${stepColor};background:${st.bg};color:${st.color}">
+        <div class="activity-event-header">
+            <span class="activity-event-icon" style="color:${stepColor}">${icon}</span>
+            <span class="activity-event-step">${ev.step.replace(/_/g, ' ')}</span>
+            <span class="activity-event-provider">${ev.provider}</span>
+            <span class="activity-event-time">${time}</span>
+        </div>
+        <div class="activity-event-detail">${esc(ev.detail)}</div>
+        ${ev.source ? `<div class="activity-event-source">${esc(ev.source)}</div>` : ''}
+    </div>`;
+}
+
+function appendEvents(events) {
+    const body = document.getElementById('activity-body');
+    if (!body || !events.length) return;
+    
+    events.forEach(ev => {
+        allEvents.push(ev);
+        eventCount++;
+        const el = document.createElement('div');
+        el.innerHTML = renderEvent(ev);
+        const child = el.firstElementChild;
+        body.appendChild(child);
+        
+        // Animate in
+        child.style.opacity = '0';
+        child.style.transform = 'translateX(-10px)';
+        requestAnimationFrame(() => {
+            child.style.transition = 'opacity 0.2s, transform 0.2s';
+            child.style.opacity = '1';
+            child.style.transform = 'translateX(0)';
+        });
+    });
+    
+    // Auto-scroll
+    body.scrollTop = body.scrollHeight;
+    
+    // Update count
+    const countEl = document.getElementById('event-count');
+    if (countEl) countEl.textContent = eventCount + ' events';
+}
+
 async function pollJobProgress(jobId) {
-    const pollInterval = 500; // ms
+    const pollInterval = 300;
+    allEvents = [];
+    eventCount = 0;
     
     while (true) {
         await new Promise(r => setTimeout(r, pollInterval));
@@ -301,22 +397,23 @@ async function pollJobProgress(jobId) {
             const bar = document.getElementById('upload-progress-bar');
             const text = document.getElementById('upload-progress-text');
             const stats = document.getElementById('upload-stats');
+            const pctEl = document.getElementById('upload-pct');
             
             if (bar) bar.style.width = pct + '%';
+            if (pctEl) pctEl.textContent = Math.round(pct) + '%';
             if (text) text.textContent = job.status === 'completed' 
                 ? 'Complete!' 
-                : `Processing... ${pct}%`;
+                : `Processing ${job.progress.completed}/${job.progress.total} products...`;
             if (stats) {
-                stats.textContent = `${job.progress.completed}/${job.progress.total} rows`
-                    + ` | ${job.progress.verified} verified`
+                stats.textContent = `${job.progress.verified} verified`
                     + ` | ${job.progress.needs_review} needs review`
                     + ` | ${Math.round(job.progress.rate_per_sec || 0)} rows/sec`
                     + ` | ETA: ${Math.round(job.progress.eta_seconds || 0)}s`;
             }
             
-            if (job.activity && job.activity.length) {
-                const actDiv = document.getElementById('activity-content');
-                if (actDiv) actDiv.innerHTML = job.activity.map(a => `<div>> ${esc(a)}</div>`).join('');
+            // Append new activity events
+            if (job.events && job.events.length) {
+                appendEvents(job.events);
             }
             
             if (job.status === 'completed') {

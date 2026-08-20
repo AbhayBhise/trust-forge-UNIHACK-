@@ -10,6 +10,7 @@ Features:
 """
 import csv
 import io
+import json
 import os
 import sys
 import time
@@ -28,6 +29,7 @@ from eval import CompositeProvider
 from models import Product, Identity
 from export_mapper import write_csv
 from column_detector import detect_columns, map_row, detect_and_report
+from activity_tracker import tracker
 
 # ── Config ──────────────────────────────────────────────────────────
 MAX_ROWS_PER_BATCH = 10000  # No practical limit for production
@@ -306,7 +308,7 @@ async def create_job(file: UploadFile = File(...)):
 
 @app.get("/pipeline/jobs/{job_id}")
 async def get_job_status(job_id: str):
-    """Get job progress and results."""
+    """Get job progress, results, and detailed activity events."""
     job = jobs.get_job(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
@@ -314,6 +316,12 @@ async def get_job_status(job_id: str):
     elapsed = time.time() - job["started_at"]
     rate = job["completed"] / elapsed if elapsed > 0 else 0
     eta = (job["total"] - job["completed"]) / rate if rate > 0 else 0
+    
+    # Get detailed activity events from the tracker
+    last_seq = job.get("last_activity_seq", 0)
+    new_events = tracker.get_since(last_seq)
+    if new_events:
+        job["last_activity_seq"] = max(e["seq"] for e in new_events)
     
     return {
         "id": job["id"],
@@ -329,6 +337,7 @@ async def get_job_status(job_id: str):
             "eta_seconds": round(eta, 1),
         },
         "activity": job.get("activity", []),
+        "events": new_events,
         "csv_url": job["csv_url"],
         "products": job["products"] if job["status"] == "completed" else None,
     }
@@ -336,16 +345,22 @@ async def get_job_status(job_id: str):
 
 @app.get("/pipeline/jobs/{job_id}/stream")
 async def stream_job_progress(job_id: str):
-    """Stream job progress via Server-Sent Events."""
+    """Stream job progress and detailed activity events via Server-Sent Events."""
     def generate():
+        last_seq = 0
         while True:
             job = jobs.get_job(job_id)
             if not job:
-                yield 'data: {"error": "Job not found"}\n\n'
+                yield f'data: {{"error": "Job not found"}}\n\n'
                 break
             
             elapsed = time.time() - job["started_at"]
             rate = job["completed"] / elapsed if elapsed > 0 else 0
+            
+            # Get new tracker events since last poll
+            new_events = tracker.get_since(last_seq)
+            if new_events:
+                last_seq = max(e["seq"] for e in new_events)
             
             data = {
                 "status": job["status"],
@@ -353,8 +368,9 @@ async def stream_job_progress(job_id: str):
                 "total": job["total"],
                 "percent": round(job["completed"] / job["total"] * 100, 1) if job["total"] > 0 else 0,
                 "rate": round(rate, 1),
+                "events": new_events,
             }
-            yield f"data: {data}\n\n"
+            yield f"data: {json.dumps(data)}\n\n"
             
             if job["status"] == "completed":
                 break

@@ -23,6 +23,7 @@ from typing import Optional
 
 from evidence_provider import EvidenceProvider
 from models import Evidence
+from activity_tracker import tracker
 
 
 # Tier 2 = marketing/description text (real, sourced, not a spec sheet)
@@ -263,6 +264,11 @@ class DescriptionExtractionProvider(EvidenceProvider):
 
         # ── Category classification ───────────────────────────────
         category = _classify_category(desc_lower)
+        tracker.emit(
+            mpn=mpn, step="desc_extraction", provider="DescriptionExtractionProvider",
+            action="classify", detail=f"Category: {category} — Brand: {brand or 'unknown'}",
+            icon="extract", status="running",
+        )
 
         # ── Dimensions ────────────────────────────────────────────
         for attr_label, value, uom in _extract_dimensions(desc):
@@ -332,7 +338,18 @@ class DescriptionExtractionProvider(EvidenceProvider):
 
         # Only return the bundle if we found something useful
         if manuf or brand or facts or series:
+            fact_names = ", ".join(facts.keys()) if facts else "none"
+            tracker.emit(
+                mpn=mpn, step="desc_extraction", provider="DescriptionExtractionProvider",
+                action="done", detail=f"Extracted: {fact_names}",
+                icon="done", status="success",
+            )
             return bundle
+        tracker.emit(
+            mpn=mpn, step="desc_extraction", provider="DescriptionExtractionProvider",
+            action="empty", detail=f"No extractable attributes from Part_Desc for {mpn}",
+            icon="arrow", status="skip",
+        )
         return {}
 
     def fetch(self, mfg_part_num: str) -> dict:

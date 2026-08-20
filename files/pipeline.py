@@ -15,6 +15,7 @@ from evidence_provider import EvidenceProvider
 from normalizer import normalize_product_attributes, normalize_attribute_value
 from html_spec_extractor import SpecBlockExtractor
 from desc_extraction_provider import DescriptionExtractionProvider
+from activity_tracker import tracker
 import config_appliances
 import config_faucets
 import config_fittings
@@ -74,9 +75,13 @@ def build_product(row: dict, provider: EvidenceProvider) -> Product:
         mpn = "UNKNOWN"
     product = Product(mfg_part_num=mpn, part_desc=row.get("Part_Desc", ""))
 
+    tracker.emit(
+        mpn=mpn, step="identity_resolution", provider="Pipeline",
+        action="start", detail=f"Processing {mpn} — {row.get('Part_Desc', '')[:50]}",
+        icon="arrow", status="running",
+    )
+
     try:
-        # Use fetch_with_row when available (gives DescriptionExtractionProvider
-        # access to Part_Desc, E1_Brand, Part_Manuf for universal attribute extraction)
         if hasattr(provider, "fetch_with_row"):
             evidence_bundle = provider.fetch_with_row(mpn, row)
         else:
@@ -90,7 +95,6 @@ def build_product(row: dict, provider: EvidenceProvider) -> Product:
     if evidence_found:
         product.manufacturer_name = evidence_bundle.get("_manufacturer_name", "")
         product.brand_name = evidence_bundle.get("_brand_name", "")
-        # Capture auxiliary evidence fields for export mapper
         product.with_phrase = evidence_bundle.get("_with_phrase", "")
         product.approvals = evidence_bundle.get("_approvals", "")
     
@@ -103,6 +107,12 @@ def build_product(row: dict, provider: EvidenceProvider) -> Product:
             if not product.manufacturer_name or "cooperative" in (product.manufacturer_name or "").lower():
                 product.manufacturer_name = mfr
             break
+
+    tracker.emit(
+        mpn=mpn, step="identity_resolution", provider="Pipeline",
+        action="done", detail=f"Identity: {product.identity.status} — Brand: {product.brand_name} — Mfr: {product.manufacturer_name}",
+        icon="done", status="success" if evidence_found else "skip",
+    )
 
     # Taxonomy classification: Try to use Classpath from input, else infer from Part_Desc
     part_desc = row.get("Part_Desc", "").lower()
@@ -133,6 +143,12 @@ def build_product(row: dict, provider: EvidenceProvider) -> Product:
         product._cfg = config_appliances
     else:
         product._cfg = config_generic
+
+    tracker.emit(
+        mpn=mpn, step="category_detection", provider="Pipeline",
+        action="done", detail=f"Config: {product._cfg.__name__.split('.')[-1]} — Category: {category}",
+        icon="done", status="success",
+    )
 
     facts = evidence_bundle.get("facts", {}) if evidence_found else {}
 
@@ -185,12 +201,17 @@ def build_product(row: dict, provider: EvidenceProvider) -> Product:
                 product.attributes.append(attr)
 
     # ── Step 2.5: Attribute Normalization (Paper 1, Section 8.1) ──────
-    # Normalize attribute values to canonical forms AFTER extraction,
-    # BEFORE validation and confidence scoring. This ensures:
-    # 1. Values are standardized for consistent downstream processing
-    # 2. title_match checks work correctly with normalized forms
-    # 3. Description generation uses clean, consistent values
+    tracker.emit(
+        mpn=mpn, step="normalization", provider="Pipeline",
+        action="running", detail=f"Normalizing {len(product.attributes)} attribute values...",
+        icon="normalize", status="running",
+    )
     normalize_product_attributes(product.attributes)
+    tracker.emit(
+        mpn=mpn, step="normalization", provider="Pipeline",
+        action="done", detail=f"Normalization complete — canonical forms applied",
+        icon="done", status="success",
+    )
 
     # ── Step 2.6: Multi-Source Cross-Validation (Paper 1 + 2) ────────
     # When the provider supplies cross-validation evidence, cross-check
@@ -199,22 +220,46 @@ def build_product(row: dict, provider: EvidenceProvider) -> Product:
         _cross_validate_evidence(product, evidence_bundle)
 
     # ── Step 3: Validation ───────────────────────────────────────────
+    tracker.emit(
+        mpn=mpn, step="validation", provider="Pipeline",
+        action="running", detail=f"Running validation checks on {len(product.attributes)} attributes...",
+        icon="validate", status="running",
+    )
     for attr in product.attributes:
         label = attr.attribute
         dtype = next((t for l, t, _, _ in product._cfg.ATTRIBUTES if l == label), "text")
         uom_expected = next((u for l, _, u, _ in product._cfg.ATTRIBUTES if l == label), None)
         required = next((r for l, _, _, r in product._cfg.ATTRIBUTES if l == label), False)
         _validate_attribute(attr, product, dtype, uom_expected)
+    tracker.emit(
+        mpn=mpn, step="validation", provider="Pipeline",
+        action="done", detail=f"Validation complete — {sum(1 for a in product.attributes if a.status == 'verified')}/{len(product.attributes)} verified",
+        icon="done", status="success",
+    )
 
     # ── Step 4: Confidence Scoring (enhanced) ────────────────────────
+    tracker.emit(
+        mpn=mpn, step="confidence_scoring", provider="Pipeline",
+        action="running", detail=f"Scoring confidence for {len(product.attributes)} attributes...",
+        icon="score", status="running",
+    )
     for attr in product.attributes:
         _score_confidence(attr, product)
+    avg_conf = sum(a.confidence for a in product.attributes) / len(product.attributes) if product.attributes else 0
+    tracker.emit(
+        mpn=mpn, step="confidence_scoring", provider="Pipeline",
+        action="done", detail=f"Confidence scored — avg: {avg_conf:.0%} — {sum(1 for a in product.attributes if a.status == 'verified')}/{len(product.attributes)} verified",
+        icon="done", status="success",
+    )
 
     _render_descriptions(product, row)
 
     # ── Step 5: Use pre-verified descriptions from GT seed ──────────
-    # When the evidence bundle is from GroundTruthSeedProvider (Tier 5),
-    # it provides the exact verified descriptions. Use them directly.
+    tracker.emit(
+        mpn=mpn, step="description_generation", provider="Pipeline",
+        action="running", detail=f"Generating {len(product._cfg.TEMPLATES)} description templates...",
+        icon="extract", status="running",
+    )
     if evidence_found:
         desc_overrides = {
             "_mobile_desc":   "MOBILE_DESC",
@@ -234,6 +279,13 @@ def build_product(row: dict, provider: EvidenceProvider) -> Product:
             product.classpath_confidence = 1.0
 
     _compute_quality_score(product)
+
+    tracker.emit(
+        mpn=mpn, step="complete", provider="Pipeline",
+        action="done", detail=f"Pipeline complete — {len(product.attributes)} attrs, {len(product.descriptions)} descs, score: {product.quality_score['mean_confidence']:.0%}",
+        icon="done", status="success",
+    )
+
     return product
 
 

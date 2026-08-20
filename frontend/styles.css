@@ -651,6 +651,114 @@ tbody tr:hover {
     color: var(--gray-300);
 }
 
+/* ── Activity Feed ─────────────────────────────────────────────── */
+.activity-feed {
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+    background: var(--white);
+}
+
+.activity-feed-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.625rem 1rem;
+    background: var(--gray-50);
+    border-bottom: 1px solid var(--border-light);
+}
+
+.activity-feed-title {
+    font-size: 0.8125rem;
+    font-weight: 600;
+    color: var(--gray-700);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.activity-feed-count {
+    font-size: 0.75rem;
+    color: var(--gray-400);
+    font-variant-numeric: tabular-nums;
+}
+
+.activity-feed-body {
+    max-height: 400px;
+    overflow-y: auto;
+    scroll-behavior: smooth;
+}
+
+.activity-event {
+    padding: 0.5rem 0.75rem;
+    border-bottom: 1px solid var(--border-light);
+    transition: background 0.15s;
+}
+
+.activity-event:last-child {
+    border-bottom: none;
+}
+
+.activity-event:hover {
+    filter: brightness(0.97);
+}
+
+.activity-event-header {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+}
+
+.activity-event-icon {
+    font-size: 0.875rem;
+    width: 1.25rem;
+    text-align: center;
+    flex-shrink: 0;
+}
+
+.activity-event-step {
+    font-size: 0.6875rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    opacity: 0.7;
+}
+
+.activity-event-provider {
+    font-size: 0.6875rem;
+    font-weight: 500;
+    opacity: 0.5;
+    font-family: 'SF Mono', 'Fira Code', monospace;
+}
+
+.activity-event-time {
+    font-size: 0.6875rem;
+    opacity: 0.4;
+    margin-left: auto;
+    font-variant-numeric: tabular-nums;
+}
+
+.activity-event-detail {
+    font-size: 0.8125rem;
+    margin-top: 0.125rem;
+    line-height: 1.4;
+    word-break: break-word;
+}
+
+.activity-event-source {
+    font-size: 0.6875rem;
+    opacity: 0.4;
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    margin-top: 0.125rem;
+}
+
+/* Spinner override for activity feed */
+.activity-feed .spinner {
+    width: 14px;
+    height: 14px;
+    border-width: 2px;
+}
+
 /* ── Responsive ───────────────────────────────────────────────────── */
 @media (max-width: 1024px) {
     .sidebar { display: none; }
