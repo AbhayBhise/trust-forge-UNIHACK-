@@ -1,21 +1,5 @@
 """
 Description Extraction Provider — Doc-First extraction from Part_Desc.
-
-This provider treats the Part_Desc field as a primary document and extracts
-structured attributes from it using pattern matching and keyword detection.
-
-This is a legitimate Doc-First approach: the product description is the
-manufacturer's own text (passed through the distributor), and we extract
-structured data from it just like we would from a web page or PDF.
-
-Evidence tier: 2 (marketing/description text — real, sourced, but not a
-manufacturer spec sheet or verified product page)
-
-For every row in the 1000-item dataset, this provides:
-- Brand / Manufacturer (from E1_Brand / Part_Manuf fields)
-- Product category classification
-- Dimensions, material, color, grade, quantity from Part_Desc text
-- Confidence proportional to how much we extracted
 """
 from __future__ import annotations
 import re
@@ -26,12 +10,9 @@ from models import Evidence
 from activity_tracker import tracker
 
 
-# Tier 2 = marketing/description text (real, sourced, not a spec sheet)
 DESC_SOURCE_TIER = 2
 PLACEHOLDER_BRANDS = {"-- Unbranded --", "-- No Unilog Brand --", "-- No DIB Brand --"}
 
-
-# ── Category classification keywords ────────────────────────────────
 CATEGORY_KEYWORDS = {
     "Abrasives & Sanding": [
         "sanding", "abrasive", "disc", "belt", "sandpaper", "grit", "abranet",
@@ -39,7 +20,7 @@ CATEGORY_KEYWORDS = {
     ],
     "Cutting & Grinding": [
         "cut-off", "cutoff", "cut off", "grinding", "grind", "metal cut",
-        "steel demon", "speed demon", "circular saw",
+        "steel demon", "speed demon", "circular saw", "reciprocating",
     ],
     "Decking & Railing": [
         "decking", "railing", "rail kit", "baluster", "balusters", "deck",
@@ -67,33 +48,67 @@ CATEGORY_KEYWORDS = {
     ],
 }
 
-
-# ── Universal attribute extraction patterns ──────────────────────────
-# These run against the full Part_Desc text for all categories.
-
-# Dimensions: e.g. 5", 1/2"x18", 12"x20mm, 2.75x30, 1x6-16'
 DIM_PATTERNS = [
-    # Fractional inch + inch: 1/2"x18"
-    (re.compile(r'(\d+/\d+)"?\s*[xX×]\s*(\d+(?:\.\d+)?)"', re.I), "Size", "in"),
-    # Decimal x decimal: 2.75x30
-    (re.compile(r'(\d+(?:\.\d+)?)\s*[xX×]\s*(\d+(?:\.\d+)?)"?', re.I), "Size", None),
-    # WxH: 5"x.045"x7/8"
-    (re.compile(r'(\d+(?:[\'\"\/\d\s.]+)?)\s*[xX×]\s*(\d+(?:\.[0-9]+)?)"\s*[xX×]\s*(\d+(?:/\d+)?)"', re.I), "Dimensions", "in"),
-    # Single dimension with unit: 5", 12", 9"
-    (re.compile(r'\b(\d+(?:-\d+/\d+)?)\s*"\s*(?![xX×])', re.I), "Size", "in"),
-    # Foot length: 16', 6', 8'
-    (re.compile(r"\b(\d+)'\s*(?![xX×])", re.I), "Length", "ft"),
-    # 1x6 lumber notation
+    (re.compile(r'(\d+/\d+)"?\s*[xX]\s*(\d+(?:\.\d+)?)\s*"', re.I), "Size", "in"),
+    (re.compile(r'(\d+(?:\.\d+)?)\s*[xX]\s*(\d+(?:\.\d+)?)\s*"?', re.I), "Size", None),
+    (re.compile(r'(\d+(?:[\'\/\d\s.]+)?)\s*[xX]\s*(\d+(?:\.[0-9]+)?)\s*"\s*[xX]\s*(\d+(?:/\d+)?)\s*"', re.I), "Size", "in"),
+    (re.compile(r'\b(\d+(?:-\d+/\d+)?)\s*"\s*(?![xX])', re.I), "Size", "in"),
+    (re.compile(r"\b(\d+)'\s*(?![xX])", re.I), "Length", "ft"),
     (re.compile(r"\b(\d+)[xX](\d+)-(\d+)'", re.I), "Size", "in"),
 ]
 
-# Grit grade: P80, P120, P150, P180, P220, P320
-GRIT_PATTERN = re.compile(r'\bP(\d{2,3})\b', re.I)
+GRIT_PATTERNS = [
+    re.compile(r'\bP(\d{2,3})\b', re.I),
+    re.compile(r'\b(\d{2,3})\s*[-]?\s*[Gg]rit\b', re.I),
+]
 
-# Quantity: 6pc, 50 Disc/Box, 10-pack
-QTY_PATTERN = re.compile(r'\b(\d+)\s*(pc|pcs|piece|pieces|disc/box|disc|pack|count|ct|rolls?|sheets?)\b', re.I)
+QTY_PATTERNS = [
+    re.compile(r'\b(\d+)\s*(pc|pcs|piece|pieces|disc/box|disc|pack|count|ct|rolls?|sheets?|box)\b', re.I),
+    re.compile(r'\b(\d+)\s*(?:per|\/)\s*(box|case|pack|carton)\b', re.I),
+]
 
-# Material keywords
+DIAMETER_PATTERN = re.compile(r'(?:dia|diameter)\s*[:\-]?\s*(\d+(?:[-\/\.]\d+)?)\s*(?:in\.?|inch|")?', re.I)
+THICKNESS_PATTERN = re.compile(r'(?:thk|thickness)\s*[:\-]?\s*(\d+(?:[-\/\.]\d+)?)\s*(?:in\.?|inch|")?', re.I)
+ARBOR_PATTERN = re.compile(r'(\d+/\d+)"?\s*(?:arbor|bore|hub)', re.I)
+RPM_PATTERN = re.compile(r'(?:max\.?\s*)?(\d{4,6})\s*(?:rpm|R\.P\.M)', re.I)
+WIRE_GAUGE_PATTERN = re.compile(r'\b(\d{1,2})\s*(?:awg|ga|gauge)\b', re.I)
+CONDUCTORS_PATTERN = re.compile(r'\b(\d{1,2})/(\d)\s*(?:awg|gauge|uf|nm|thhn|cable|wire)\b', re.I)
+THREAD_PATTERN = re.compile(r'#(\d+[-\.]\d+)', re.I)
+HEAD_PATTERN = re.compile(r'\b(phil?lips|flat\s+head|hex\s+head|pan\s+head|round\s+head|bugle\s+head|countersunk|socket\s+head)\s*(?:head|screw)?\b', re.I)
+DRIVE_PATTERN = re.compile(r'\b(phil?lips|torx|sq|square|slotted|pozi|hex|allen)\s*(?:drive|bit)?\s*(?:#?\d+)?\b', re.I)
+WOOD_SPECIES_PATTERN = re.compile(r'\b(southern\s+yellow\s+pine|pressure[-\s]treated\s+pine|cedar|redwood|spruce|fir|pine|oak|maple|birch|poplar|hickory|hemlock|cypress)\b', re.I)
+GRADE_PATTERN = re.compile(r'\b(#\d|select|premium|common|grade\s*\d|clear)\b', re.I)
+TREATMENT_PATTERN = re.compile(r'\b(pressure[-\s]treated|pt\b|acq|mcq|ca[-\s]b|ucfa|ucfb|ucfc|ground\s+contact|above\s+ground)\b', re.I)
+PIPE_SIZE_PATTERN = re.compile(r'\b(\d+/\d+|\d+(?:\.\d+)?)\s*(?:in\.?|inch|")\s*(?:npt|pipe|pt|male|female)\b', re.I)
+FLOW_RATE_PATTERN = re.compile(r'(\d+(?:\.\d+)?)\s*(?:gpm|gallons?\s*per\s*minute)', re.I)
+MAX_PRESSURE_PATTERN = re.compile(r'(\d+)\s*(?:psi|p\.s\.i)', re.I)
+NUM_HANDLES_PATTERN = re.compile(r'(\d+)\s*[\-]?\s*[Hh]andle', re.I)
+VOLTAGE_PATTERN = re.compile(r'(\d{2,3}(?:/\d{2,3})?)\s*(?:v(?:olts?)?|volt)', re.I)
+AMPERAGE_PATTERN = re.compile(r'\b(\d+(?:\.\d+)?)\s*(?:a(?:mps?)?|amp)\b', re.I)
+WATTAGE_PATTERN = re.compile(r'\b(\d+)\s*(?:w(?:atts?)?)\b', re.I)
+
+FITTING_TYPE_KEYWORDS = {
+    "Elbow": ["elbow", "ell"],
+    "Tee": [" tee ", " tees "],
+    "Coupling": ["coupling", "coupl"],
+    "Union": ["union"],
+    "Reducer": ["reducer", "reducing"],
+    "Nipple": ["nipple"],
+    "Plug": ["plug"],
+    "Cap": [" cap "],
+    "Adapter": ["adapter", "adaptor"],
+}
+
+CONNECTION_KEYWORDS = {
+    "NPT": ["npt"],
+    "FPT": ["fpt"],
+    "MPT": ["mpt"],
+    "Solder": ["solder", "sweat"],
+    "Push": ["push", "sharkbite", "push-fit"],
+    "Threaded": ["threaded", "thread"],
+    "Compression": ["compression"],
+}
+
 MATERIAL_KEYWORDS = {
     "Stainless Steel": ["stainless steel", "stainless", "sst"],
     "Steel": ["steel", "metal"],
@@ -106,14 +121,26 @@ MATERIAL_KEYWORDS = {
     "Carbide": ["carbide"],
     "Diamond": ["diamond"],
     "Ceramic": ["ceramic"],
+    "Silicon Carbide": ["silicon carbide", "sic"],
+    "Aluminum Oxide": ["aluminum oxide", "al oxide"],
+    "Ceramic Alumina": ["ceramic alumina"],
+    "Tungsten Carbide": ["tungsten carbide"],
+    "Fiberglass": ["fiberglass", "glass reinforced"],
+    "Rubber": ["rubber"],
+    "Concrete": ["concrete", "cement"],
+    "Stone": ["stone", "natural stone"],
 }
 
-# Color keywords
 COLOR_KEYWORDS = {
     "White": ["white", " wh "],
     "Black": ["black", " blk "],
     "Gray": ["gray", "grey"],
     "Brown": ["brown"],
+    "Red": ["red "],
+    "Blue": ["blue"],
+    "Green": ["green"],
+    "Yellow": [" yellow "],
+    "Natural": ["natural", " nat "],
     "Mahogany": ["mahogany", " mh "],
     "English Walnut": ["english walnut", " ew "],
     "Weathered Teak": ["weathered teak", " wt "],
@@ -123,18 +150,23 @@ COLOR_KEYWORDS = {
     "Coastline": ["coastline", " cs "],
 }
 
-# Mounting/style keywords
 MOUNTING_KEYWORDS = {
     "Horizontal": ["horiz", "horizontal"],
     "Stair": ["stair", "str "],
     "Flat": ["fl ", "flat"],
 }
 
-# Edge type keywords
 EDGE_KEYWORDS = {
     "Square Edge": ["sq edge", "sq edg", "square edge"],
     "Grooved": ["grooved", " grv"],
-    "Rounded": ["round", " rd ", " rnd"],
+    "Rounded": [" round edge", "round edg", " rd ", " rnd"],
+}
+
+PROFILE_KEYWORDS = {
+    "Grooved": ["grooved", "grv"],
+    "Square": ["sq ", "square"],
+    "Smooth": ["smooth"],
+    "Tongue and Groove": ["tongue", "t&g", "tongue and groove"],
 }
 
 
@@ -147,11 +179,9 @@ def _make_ev(source_desc: str = "") -> Evidence:
 
 
 def _clean_brand(raw: str) -> str:
-    """Return empty string for placeholder brands, else strip parens/codes."""
     raw = raw.strip()
     if raw in PLACEHOLDER_BRANDS:
         return ""
-    # Strip distributor codes in parens: "Freud Inc (2435)" -> "Freud Inc"
     return re.sub(r'\s*\(\w+\)\s*$', '', raw).strip()
 
 
@@ -162,60 +192,74 @@ def _classify_category(desc_lower: str) -> str:
     return "General Hardware"
 
 
-def _extract_dimensions(desc: str) -> list[tuple[str, str, Optional[str]]]:
-    """Extract dimension facts from description text."""
+def _extract_dimensions(desc: str):
     results = []
     for pat, attr_label, uom in DIM_PATTERNS:
         m = pat.search(desc)
         if m:
             value = m.group(0).strip().rstrip('"\'')
             results.append((attr_label, value, uom))
-            break  # Take the first/richest dimension match
+            break
     return results
 
 
-def _extract_grit(desc: str) -> Optional[str]:
-    m = GRIT_PATTERN.search(desc)
-    return m.group(0) if m else None
-
-
-def _extract_quantity(desc: str) -> Optional[str]:
-    m = QTY_PATTERN.search(desc)
-    if m:
-        return m.group(1) + " " + m.group(2).rstrip("s").capitalize()
+def _extract_grit(desc: str):
+    for pat in GRIT_PATTERNS:
+        m = pat.search(desc)
+        if m:
+            return m.group(0)
     return None
 
 
-def _extract_material(desc_lower: str) -> Optional[str]:
+def _extract_quantity(desc: str):
+    for pat in QTY_PATTERNS:
+        m = pat.search(desc)
+        if m:
+            return m.group(1) + " " + m.group(2).rstrip("s").capitalize()
+    return None
+
+
+def _extract_single(pattern, desc: str):
+    m = pattern.search(desc)
+    return m.group(1).strip() if m and m.group(1) else None
+
+
+def _extract_material(desc_lower: str):
     for material, keywords in MATERIAL_KEYWORDS.items():
         if any(kw in desc_lower for kw in keywords):
             return material
     return None
 
 
-def _extract_color(desc_lower: str) -> Optional[str]:
+def _extract_color(desc_lower: str):
     for color, keywords in COLOR_KEYWORDS.items():
         if any(kw in desc_lower for kw in keywords):
             return color
     return None
 
 
-def _extract_mounting(desc_lower: str) -> Optional[str]:
+def _extract_mounting(desc_lower: str):
     for mounting, keywords in MOUNTING_KEYWORDS.items():
         if any(kw in desc_lower for kw in keywords):
             return mounting
     return None
 
 
-def _extract_edge_type(desc_lower: str) -> Optional[str]:
+def _extract_edge_type(desc_lower: str):
     for edge, keywords in EDGE_KEYWORDS.items():
         if any(kw in desc_lower for kw in keywords):
             return edge
     return None
 
 
-def _extract_series_from_desc(desc: str) -> Optional[str]:
-    """Detect named series/product lines in description."""
+def _extract_keyword_match(keyword_map, desc_lower: str):
+    for label, keywords in keyword_map.items():
+        if any(kw in desc_lower for kw in keywords):
+            return label
+    return None
+
+
+def _extract_series_from_desc(desc: str):
     patterns = [
         re.compile(r'(Professional\s+Series|Eco\s+Series|Premium\s+Series|Elite\s+Series|Ultra\s+Series)', re.I),
         re.compile(r'(Steel\s+Demon|Speed\s+Demon|Cubitron\s+II|CleanBoost)', re.I),
@@ -229,25 +273,8 @@ def _extract_series_from_desc(desc: str) -> Optional[str]:
 
 
 class DescriptionExtractionProvider(EvidenceProvider):
-    """
-    Doc-First extraction from the Part_Desc field.
-
-    For every product in the 1000-row dataset:
-    - Extracts brand and manufacturer from E1_Brand / Part_Manuf
-    - Classifies product category from description keywords
-    - Extracts dimensions, material, color, grade, quantity
-    - Returns a well-structured evidence bundle with Tier-2 confidence
-
-    This is NOT mocking — it extracts real structured data from the
-    distributor's product description, which is the primary document
-    available for each product.
-    """
 
     def fetch_from_row(self, row: dict) -> dict:
-        """
-        Main entry point — takes the full input row dict.
-        Falls back to fetch(mpn) for backwards compatibility.
-        """
         mpn   = row.get("Mfg_Part_Num", "")
         desc  = row.get("Part_Desc", "")
         manuf = _clean_brand(row.get("Part_Manuf", ""))
@@ -258,68 +285,146 @@ class DescriptionExtractionProvider(EvidenceProvider):
             brand = _clean_brand(row.get("DIB_Brand", ""))
 
         desc_lower = desc.lower()
+        # Strip MPN from description to avoid false matches on MPN digits
+        desc_clean = desc
+        if mpn and mpn in desc:
+            desc_clean = desc.replace(mpn, '', 1).strip(' -')
+        desc_clean_lower = desc_clean.lower()
         ev = _make_ev(mpn)
-
         facts = {}
 
-        # ── Category classification ───────────────────────────────
         category = _classify_category(desc_lower)
         tracker.emit(
             mpn=mpn, step="desc_extraction", provider="DescriptionExtractionProvider",
-            action="classify", detail=f"Category: {category} — Brand: {brand or 'unknown'}",
+            action="classify", detail=f"Category: {category} \u2014 Brand: {brand or 'unknown'}",
             icon="extract", status="running",
         )
 
-        # ── Dimensions ────────────────────────────────────────────
-        for attr_label, value, uom in _extract_dimensions(desc):
+        for attr_label, value, uom in _extract_dimensions(desc_clean):
             if value and attr_label not in facts:
                 facts[attr_label] = (value, uom, ev)
 
-        # ── Grit grade (abrasives) ────────────────────────────────
-        grit = _extract_grit(desc)
+        grit = _extract_grit(desc_clean)
         if grit:
             facts["Abrasive Grade"] = (grit, None, ev)
 
-        # ── Quantity / pack size ──────────────────────────────────
-        qty = _extract_quantity(desc)
+        qty = _extract_quantity(desc_clean)
         if qty:
             facts["Quantity"] = (qty, None, ev)
 
-        # ── Material ──────────────────────────────────────────────
-        material = _extract_material(desc_lower)
+        diameter = _extract_single(DIAMETER_PATTERN, desc_clean)
+        if diameter:
+            facts["Diameter"] = (diameter, "in", ev)
+
+        thickness = _extract_single(THICKNESS_PATTERN, desc_clean)
+        if thickness:
+            facts["Thickness"] = (thickness, "in", ev)
+
+        arbor = _extract_single(ARBOR_PATTERN, desc_clean)
+        if arbor:
+            facts["Arbor Size"] = (arbor, "in", ev)
+
+        rpm = _extract_single(RPM_PATTERN, desc_clean)
+        if rpm:
+            facts["Max RPM"] = (rpm, "rpm", ev)
+
+        material = _extract_material(desc_clean_lower)
         if material:
             facts["Material"] = (material, None, ev)
 
-        # ── Color ─────────────────────────────────────────────────
-        color = _extract_color(desc_lower)
+        wood = _extract_single(WOOD_SPECIES_PATTERN, desc_clean)
+        if wood:
+            facts["Wood Species"] = (wood, None, ev)
+
+        color = _extract_color(desc_clean_lower)
         if color:
             facts["Color"] = (color, None, ev)
 
-        # ── Mounting / orientation ────────────────────────────────
-        mounting = _extract_mounting(desc_lower)
+        mounting = _extract_mounting(desc_clean_lower)
         if mounting:
             facts["Mounting Type"] = (mounting, None, ev)
 
-        # ── Edge type / finish style ──────────────────────────────
-        edge = _extract_edge_type(desc_lower)
+        edge = _extract_edge_type(desc_clean_lower)
         if edge:
             facts["Edge Type"] = (edge, None, ev)
 
-        # ── Series / product line ─────────────────────────────────
-        series = _extract_series_from_desc(desc)
+        profile = _extract_keyword_match(PROFILE_KEYWORDS, desc_clean_lower)
+        if profile:
+            facts["Profile"] = (profile, None, ev)
 
-        # ── Product type extraction ───────────────────────────────
-        # Strip MPN prefix from description to get cleaner product name
-        product_name = desc
-        if desc.startswith(mpn):
-            product_name = desc[len(mpn):].strip(" -")
+        fitting = _extract_keyword_match(FITTING_TYPE_KEYWORDS, desc_clean_lower)
+        if fitting:
+            facts["Fitting Type"] = (fitting, None, ev)
 
-        # Build return bundle
+        conn = _extract_keyword_match(CONNECTION_KEYWORDS, desc_clean_lower)
+        if conn:
+            facts["Connection Type"] = (conn, None, ev)
+
+        pipe_size = _extract_single(PIPE_SIZE_PATTERN, desc_clean)
+        if pipe_size:
+            facts["Pipe Size"] = (pipe_size, "in", ev)
+
+        flow = _extract_single(FLOW_RATE_PATTERN, desc_clean)
+        if flow:
+            facts["Flow Rate"] = (flow, "gpm", ev)
+
+        pressure = _extract_single(MAX_PRESSURE_PATTERN, desc_clean)
+        if pressure:
+            facts["Maximum Pressure"] = (pressure, "psi", ev)
+
+        handles = _extract_single(NUM_HANDLES_PATTERN, desc_clean)
+        if handles:
+            facts["Number of Handles"] = (handles, None, ev)
+
+        voltage = _extract_single(VOLTAGE_PATTERN, desc_clean)
+        if voltage:
+            facts["Voltage Rating"] = (voltage, "V", ev)
+
+        amps = _extract_single(AMPERAGE_PATTERN, desc_clean)
+        if amps:
+            facts["Amperage Rating"] = (amps, "A", ev)
+
+        watts = _extract_single(WATTAGE_PATTERN, desc_clean)
+        if watts:
+            facts["Wattage"] = (watts, "W", ev)
+
+        wire_gauge = _extract_single(WIRE_GAUGE_PATTERN, desc_clean)
+        if wire_gauge:
+            facts["Wire Gauge"] = (wire_gauge, "AWG", ev)
+
+        cond_match = CONDUCTORS_PATTERN.search(desc_clean)
+        if cond_match:
+            facts["Number of Conductors"] = (cond_match.group(1), None, ev)
+
+        thread = _extract_single(THREAD_PATTERN, desc_clean)
+        if thread:
+            facts["Thread Size"] = (thread, None, ev)
+
+        head = _extract_single(HEAD_PATTERN, desc_clean)
+        if head:
+            facts["Head Type"] = (head, None, ev)
+
+        drive = _extract_single(DRIVE_PATTERN, desc_clean)
+        if drive:
+            facts["Drive Type"] = (drive, None, ev)
+
+        grade = _extract_single(GRADE_PATTERN, desc_clean)
+        if grade:
+            facts["Grade"] = (grade, None, ev)
+
+        treatment = _extract_single(TREATMENT_PATTERN, desc_clean)
+        if treatment:
+            facts["Treatment"] = (treatment, None, ev)
+
+        series = _extract_series_from_desc(desc_clean)
+
+        product_name = desc_clean
+
         bundle = {
             "_manufacturer_name": manuf,
             "_brand_name": brand,
             "_series": series,
-            "source_url": ev.source_url if 'ev' in locals() else "part_desc-",
+            "source_url": ev.source_url,
             "source_tier": DESC_SOURCE_TIER,
             "_category": category,
             "_product_name": product_name,
@@ -336,7 +441,6 @@ class DescriptionExtractionProvider(EvidenceProvider):
             "facts": facts,
         }
 
-        # Only return the bundle if we found something useful
         if manuf or brand or facts or series:
             fact_names = ", ".join(facts.keys()) if facts else "none"
             tracker.emit(
@@ -353,5 +457,4 @@ class DescriptionExtractionProvider(EvidenceProvider):
         return {}
 
     def fetch(self, mfg_part_num: str) -> dict:
-        """Backwards-compatible fetch — no row context, minimal extraction."""
-        return {}  # Requires fetch_from_row to get Part_Desc context
+        return {}

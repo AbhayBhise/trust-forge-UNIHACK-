@@ -1,18 +1,66 @@
 """
 Category Configuration: Generic (fallback for unrecognized categories)
-Provides reasonable default attributes for products that don't match
-a specific category config (faucets, fittings, appliances).
+Covers: abrasives, tools, plumbing, electrical, decking, lumber, hardware, etc.
+Provides 30+ attributes so non-appliance products get rich extraction.
 """
 
 CLASSPATH = ""
 
 # Generic attributes that apply to most product types
+# Organized by domain so any product gets reasonable coverage
 ATTRIBUTES = [
     # (label, type, uom, required)
+    # ── Identity ──
+    ("Series", "text", None, False),
+    ("Model", "text", None, False),
+    # ── Dimensions ──
+    ("Size", "text", "in", False),
+    ("Length", "number", "in", False),
+    ("Width", "number", "in", False),
+    ("Height", "number", "in", False),
+    ("Weight", "number", "lb", False),
+    # ── Material / Finish ──
     ("Material", "enum", None, False),
     ("Color", "enum", None, False),
-    ("Size", "text", "in", False),
-    ("Weight", "number", "lb", False),
+    ("Finish", "text", None, False),
+    # ── Abrasives / Sanding ──
+    ("Abrasive Grade", "text", None, False),
+    ("Grit", "text", None, False),
+    ("Diameter", "number", "in", False),
+    ("Thickness", "number", "in", False),
+    ("Arbor Size", "text", "in", False),
+    ("Max RPM", "number", "rpm", False),
+    ("Pack Quantity", "number", None, False),
+    # ── Plumbing / Fittings ──
+    ("Fitting Type", "text", None, False),
+    ("Connection Type", "text", None, False),
+    ("Pipe Size", "text", "in", False),
+    ("Flow Rate", "number", "gpm", False),
+    ("Maximum Pressure", "number", "psi", False),
+    ("Number of Handles", "integer", None, False),
+    ("Faucet Type", "text", None, False),
+    # ── Electrical ──
+    ("Voltage Rating", "number", "V", False),
+    ("Amperage Rating", "number", "A", False),
+    ("Wattage", "number", "W", False),
+    ("Wire Gauge", "text", None, False),
+    ("Number of Conductors", "integer", None, False),
+    # ── Mounting / Install ──
+    ("Mounting Type", "enum", None, False),
+    ("Edge Type", "text", None, False),
+    # ── Lumber / Decking ──
+    ("Nominal Size", "text", None, False),
+    ("Actual Size", "text", None, False),
+    ("Wood Species", "text", None, False),
+    ("Grade", "text", None, False),
+    ("Treatment", "text", None, False),
+    ("Profile", "text", None, False),
+    # ── Hardware / Fasteners ──
+    ("Thread Size", "text", None, False),
+    ("Head Type", "text", None, False),
+    ("Drive Type", "text", None, False),
+    ("Quantity", "number", None, False),
+    # ── General ──
     ("Additional Information", "text", None, False),
     ("Warranty", "text", None, False),
     ("EAN/UPC", "text", None, False),
@@ -36,6 +84,7 @@ EVIDENCE_TIER_WEIGHTS = {
 CONFIDENCE_WEIGHTS = {
     "identity_verified": 0.22,
     "manufacturer_match": 0.18,
+    "manufacturer_extracted": 0.10,
     "title_match": 0.06,
     "unit_normalized": 0.14,
     "taxonomy_valid": 0.14,
@@ -78,6 +127,9 @@ APPROVED_UOM = {
     "oz": "oz",
     "ft": "ft",
     "BTU": "BTU",
+    "gpm": "gpm",
+    "psi": "psi",
+    "rpm": "rpm",
 }
 
 UOM_PATTERNS = [
@@ -87,6 +139,9 @@ UOM_PATTERNS = [
     (r"(\d+(?:\.\d+)?)\s*(?:inches?|IN\.|in\.|inch)", "in"),
     (r"(\d+)\s*(?:Watts?|watt)", "W"),
     (r"(\d+)\s*(?:lbs?\.?|pounds?)", "lb"),
+    (r"(\d+(?:\.\d+)?)\s*(?:gpm|GPM)", "gpm"),
+    (r"(\d+)\s*(?:psi|PSI)", "psi"),
+    (r"(\d+)\s*(?:rpm|RPM)", "rpm"),
 ]
 
 VALID_VALUES = {
@@ -94,12 +149,16 @@ VALID_VALUES = {
         "Stainless Steel", "Plastic", "Porcelain", "Glass", "Aluminum",
         "Steel", "Copper", "Brass", "Cast Iron", "Ceramic", "Zinc",
         "PVC", "CPVC", "PEX", "Carbon Steel", "Galvanized Steel", "Bronze",
-        "Wood", "Granite", "Quartz", "Marble",
+        "Wood", "Granite", "Quartz", "Marble", "Carbide", "Diamond",
+        "Silicon Carbide", "Aluminum Oxide", "Ceramic Alumina",
+        "Tungsten Carbide", "Composite", "Fiberglass", "Rubber",
     },
     "Color": {
         "White", "Black", "Stainless Steel", "Silver", "Gray", "Red",
         "Blue", "Green", "Brown", "Beige", "Bisque", "Platinum",
         "Graphite", "Matte Black", "Slate", "Black Stainless", "Custom Panel",
         "Chrome", "Brushed Nickel", "Oil Rubbed Bronze", "Polished Brass",
+        "Natural", "Mahogany", "English Walnut", "Weathered Teak",
+        "American Walnut", "Castle Gate", "French White Oak", "Coastline",
     },
 }
