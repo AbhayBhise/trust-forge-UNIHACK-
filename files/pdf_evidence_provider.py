@@ -7,7 +7,7 @@ attribute-value pairs using targeted regex patterns.
 This is real evidence extraction, not hardcoded data.
 Every fact returned has a traceable PDF source URL.
 """
-import fitz
+import pymupdf as fitz
 import re
 import os
 import logging
