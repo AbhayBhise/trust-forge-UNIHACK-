@@ -204,11 +204,17 @@ class NoMockProvider(EvidenceProvider):
 
 
 def load_input_rows():
-    with open(os.path.join(WORKSPACE_DIR, "Unihack_ Sample Dataset - Input.csv"), encoding="utf-8-sig") as f:
+    path = os.path.join(WORKSPACE_DIR, "Unihack_ Sample Dataset - Input.csv")
+    if not os.path.exists(path):
+        return []
+    with open(path, encoding="utf-8-sig") as f:
         return list(csv.DictReader(f))
 
 def load_ground_truth():
-    with open(os.path.join(WORKSPACE_DIR, "Unihack_ Expected Output - Delivery Format.csv"), encoding="utf-8-sig") as f:
+    path = os.path.join(WORKSPACE_DIR, "Unihack_ Expected Output - Delivery Format.csv")
+    if not os.path.exists(path):
+        return []
+    with open(path, encoding="utf-8-sig") as f:
         return list(csv.DictReader(f))
 
 def run():

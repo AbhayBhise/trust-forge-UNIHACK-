@@ -40,6 +40,8 @@ files/Antigravity-Build-Prompt.md
 !test_mpn_format.csv
 !test_part_number_format.csv
 !demo_dataset.csv
+!Unihack_ Expected Output - Delivery Format.csv
+!Unihack_ Sample Dataset - Input.csv
 
 # Archives
 *.zip
