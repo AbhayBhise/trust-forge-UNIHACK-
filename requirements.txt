@@ -7,3 +7,5 @@ fuzzywuzzy
 python-Levenshtein
 google-genai
 gunicorn
+beautifulsoup4
+lxml
