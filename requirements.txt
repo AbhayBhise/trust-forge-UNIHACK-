@@ -9,3 +9,4 @@ google-genai
 gunicorn
 beautifulsoup4
 lxml
+patchright

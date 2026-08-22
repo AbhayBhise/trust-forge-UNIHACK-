@@ -24,7 +24,13 @@ from urllib.parse import quote_plus
 
 import requests
 from bs4 import BeautifulSoup
-from patchright.sync_api import sync_playwright
+
+try:
+    from patchright.sync_api import sync_playwright
+    _PATCHRIGHT_AVAILABLE = True
+except ImportError:
+    _PATCHRIGHT_AVAILABLE = False
+    sync_playwright = None
 
 from evidence_provider import EvidenceProvider
 from html_spec_extractor import SpecBlockExtractor
