@@ -20,7 +20,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, RedirectResponse
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
@@ -417,6 +417,11 @@ async def stream_job_progress(job_id: str):
             time.sleep(PROGRESS_UPDATE_INTERVAL)
     
     return StreamingResponse(generate(), media_type="text/event-stream")
+
+
+@app.get("/")
+async def root():
+    return RedirectResponse(url="/frontend/")
 
 
 @app.get("/health")
