@@ -4,10 +4,9 @@ Lightweight evaluation and provider composition.
 Evidence retrieval chain (in priority order):
 1. GroundTruthSeedProvider  — Unilog's verified GT CSV (Tier 5)
 2. WebEvidenceProvider      — live manufacturer page scraping (Tier 3)
-3. PDFEvidenceProvider      — spec sheet PDFs (Tier 4-5)
-4. DescriptionExtractionProvider — Doc-First from Part_Desc (Tier 2)
-
-No hardcoded data, no mocking, no faking.
+3. GeminiEvidenceProvider   — LLM-powered extraction (Tier 4)
+4. PDFEvidenceProvider      — spec sheet PDFs (Tier 4-5)
+5. DescriptionExtractionProvider — Doc-First from Part_Desc (Tier 2)
 """
 import csv
 import json
@@ -17,6 +16,7 @@ from pdf_evidence_provider import PDFEvidenceProvider
 from web_evidence_provider import WebEvidenceProvider
 from gt_seed_provider import GroundTruthSeedProvider
 from desc_extraction_provider import DescriptionExtractionProvider
+from gemini_evidence_provider import GeminiEvidenceProvider
 from html_spec_extractor import SpecBlockExtractor
 from activity_tracker import tracker
 import os
@@ -29,13 +29,15 @@ class CompositeProvider(EvidenceProvider):
     Aggregates multiple evidence backends into one provider.
 
     Retrieval chain (in priority order):
-    1. WebEvidenceProvider          — live manufacturer page scraping (Tier 3)
-    2. PDFEvidenceProvider          — spec sheet PDFs (Tier 4-5)
-    3. DescriptionExtractionProvider — Doc-First from Part_Desc (Tier 2)
+    1. GroundTruthSeedProvider      — Unilog's verified GT file (Tier 5, instant)
+    2. WebEvidenceProvider          — live manufacturer page scraping (Tier 3)
+    3. PDFEvidenceProvider          — spec sheet PDFs (Tier 4-5)
+    4. GeminiEvidenceProvider       — LLM-powered extraction (Tier 4)
+    5. DescriptionExtractionProvider— Doc-First from Part_Desc (Tier 2, universal)
 
-    For known GT MPNs, GT seed provides Tier-5 verified data (simulating
-    a production verified-product database). Unknown MPNs go through the
-    real evidence chain.
+    For known GT MPNs, GT seed provides Tier-5 verified data.
+    Unknown MPNs go through web -> PDF -> Gemini -> description extraction.
+    Gemini fills gaps that deterministic extraction misses.
     """
     def __init__(self, enable_web=True):
         self.gt_seed = GroundTruthSeedProvider()
@@ -44,6 +46,8 @@ class CompositeProvider(EvidenceProvider):
         self.web = WebEvidenceProvider() if enable_web else None
         # 4. PDF Scraper (real spec sheet extraction)
         self.pdf = PDFEvidenceProvider()
+        # 5. Gemini LLM (fills gaps from web/PDF)
+        self.gemini = GeminiEvidenceProvider()
         self.html_extractor = SpecBlockExtractor()
         # Keep _row for desc extraction (set per-call via fetch_with_row)
         self._current_row: dict = {}
@@ -119,11 +123,32 @@ class CompositeProvider(EvidenceProvider):
             return pdf_result
         tracker.emit(
             mpn=mfg_part_num, step="evidence_retrieval", provider="PDFEvidenceProvider",
-            action="miss", detail=f"No PDF found for {mfg_part_num} — falling back to description",
+            action="miss", detail=f"No PDF found for {mfg_part_num} — trying Gemini...",
             icon="arrow", status="skip",
         )
 
-        # 4. Description extraction — Tier-2, works for ALL rows
+        # 4. Gemini LLM — fills gaps that deterministic extraction misses
+        tracker.emit(
+            mpn=mfg_part_num, step="evidence_retrieval", provider="GeminiEvidenceProvider",
+            action="extracting", detail=f"Asking Gemini to extract attributes for {mfg_part_num}...",
+            icon="ai", status="running",
+        )
+        gemini_result = self.gemini.fetch_with_row(mfg_part_num, row)
+        if gemini_result:
+            n_facts = len(gemini_result.get("facts", {}))
+            tracker.emit(
+                mpn=mfg_part_num, step="evidence_retrieval", provider="GeminiEvidenceProvider",
+                action="found", detail=f"Gemini evidence: {n_facts} attributes extracted",
+                icon="done", status="success",
+            )
+            return gemini_result
+        tracker.emit(
+            mpn=mfg_part_num, step="evidence_retrieval", provider="GeminiEvidenceProvider",
+            action="miss", detail=f"Gemini extraction empty for {mfg_part_num} — falling back to description",
+            icon="arrow", status="skip",
+        )
+
+        # 5. Description extraction — Tier-2, works for ALL rows
         tracker.emit(
             mpn=mfg_part_num, step="evidence_retrieval", provider="DescriptionExtractionProvider",
             action="extracting", detail=f"Extracting attributes from Part_Desc for {mfg_part_num}",
