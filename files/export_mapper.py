@@ -56,14 +56,22 @@ def map_to_delivery_format(product, original_row, headers):
     else:
         id_prefix = brand_short or mfr_short         # e.g. "Whirlpool"
 
-    mobile_parts = [p for p in [
-        id_prefix or None,
-        "Dishwasher",
-        series_val or None,
-        product.mfg_part_num,
-        (mounting_val + " Mounting") if mounting_val else None,
-    ] if p]
-    mapped["MOBILE_DESC"] = ", ".join(mobile_parts)
+    # ── Check category type ──────────────────────────────────────────
+    classpath = product.classpath or ""
+    part_desc = getattr(product, "part_desc", "") or original_row.get("Part_Desc", "")
+    is_appliance = "dishwasher" in classpath.lower() or "appliance" in classpath.lower() or "dishwasher" in part_desc.lower()
+    prod_type = "Dishwasher" if is_appliance else (getattr(product, "_category", None) or "Product")
+
+    # If MOBILE_DESC was not already generated, construct it
+    if not mapped.get("MOBILE_DESC"):
+        mobile_parts = [p for p in [
+            id_prefix or None,
+            prod_type,
+            series_val or None,
+            product.mfg_part_num,
+            (mounting_val + " Mounting") if mounting_val else None,
+        ] if p]
+        mapped["MOBILE_DESC"] = ", ".join(mobile_parts)
 
     # ── With field (key feature phrase from product descriptions) ────
     # Populated from evidence_bundle["_with_phrase"] if available
