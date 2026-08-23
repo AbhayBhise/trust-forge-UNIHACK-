@@ -17,7 +17,7 @@ import time
 import uuid
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import FastAPI, UploadFile, File, HTTPException, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, RedirectResponse
@@ -33,7 +33,12 @@ from activity_tracker import tracker
 
 # ── Config ──────────────────────────────────────────────────────────
 MAX_ROWS_PER_BATCH = 10000  # No practical limit for production
-TIMEOUT_SECONDS = 8.0
+# Real evidence retrieval chains real network calls (web search, scraping,
+# PDF fetch, LLM calls) — 8s was only enough for instant/local lookups and
+# silently failed every row once real scraping was wired in. Provider-level
+# budgets (WebEvidenceProvider, AgenticEvidenceProvider) cap themselves at
+# ~12s each; this is the outer safety net for the full chain.
+TIMEOUT_SECONDS = 60.0
 MAX_WORKERS = 20  # Increased for fast HTTP playwright server
 PROGRESS_UPDATE_INTERVAL = 0.1  # seconds
 
@@ -85,6 +90,37 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Only generated export CSVs are ever meant to be publicly downloadable.
+# The old setup mounted the whole `files/` directory (server.py, pipeline
+# source, web_evidence_cache.json, gemini_cache.json, server.log) at /files,
+# meaning anyone could download the entire source tree and internal logs
+# from the deployed instance. Exports now live in their own subdirectory.
+EXPORTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "exports")
+os.makedirs(EXPORTS_DIR, exist_ok=True)
+
+MAX_UPLOAD_BYTES = 25 * 1024 * 1024  # 25 MB — generous for a CSV, bounds memory use
+
+# Minimal in-memory rate limit: N requests per IP per window, for the
+# expensive processing endpoints. Fine for a single-instance demo deployment;
+# not meant to replace a real reverse-proxy rate limiter at real scale.
+_rate_limit_state: dict[str, list[float]] = {}
+_rate_limit_lock = threading.Lock()
+RATE_LIMIT_MAX_REQUESTS = 10
+RATE_LIMIT_WINDOW_SECONDS = 60.0
+
+
+def check_rate_limit(client_ip: str):
+    now = time.time()
+    with _rate_limit_lock:
+        history = _rate_limit_state.setdefault(client_ip, [])
+        history[:] = [t for t in history if now - t < RATE_LIMIT_WINDOW_SECONDS]
+        if len(history) >= RATE_LIMIT_MAX_REQUESTS:
+            raise HTTPException(
+                status_code=429,
+                detail=f"Rate limit exceeded: max {RATE_LIMIT_MAX_REQUESTS} requests per {int(RATE_LIMIT_WINDOW_SECONDS)}s.",
+            )
+        history.append(now)
 
 # No hardcoded schema - we auto-detect columns from any CSV format
 
@@ -196,8 +232,7 @@ def process_batch_background(job_id: str, rows: list, provider: CompositeProvide
                 row = futures[future]
                 # Try to extract MPN from any column name
                 mpn = row.get("Mfg_Part_Num") or row.get("MPN") or row.get("Part_Number") or "UNKNOWN"
-                p = Product()
-                p.mfg_part_num = mpn
+                p = Product(mfg_part_num=mpn)
                 p.identity = Identity(status="needs_review", matched_on="error")
                 p.quality_score = {"completeness": 0.0, "validation_pass_rate": 0.0, "mean_confidence": 0.0, "evidence_coverage": 0.0}
                 p.descriptions = {}
@@ -218,9 +253,8 @@ def process_batch_background(job_id: str, rows: list, provider: CompositeProvide
             )
     
     # Export CSV
-    files_dir = os.path.dirname(os.path.abspath(__file__))
     export_filename = f"export_{job_id}.csv"
-    export_path = os.path.join(files_dir, export_filename)
+    export_path = os.path.join(EXPORTS_DIR, export_filename)
     
     try:
         write_csv(products, rows, HEADERS, export_path)
@@ -240,12 +274,15 @@ def process_batch_background(job_id: str, rows: list, provider: CompositeProvide
 
 # ── Endpoints ───────────────────────────────────────────────────────
 @app.post("/pipeline/process")
-async def process_pipeline(file: UploadFile = File(...)):
+async def process_pipeline(request: Request, file: UploadFile = File(...)):
     """Synchronous processing (for small datasets, <100 rows)."""
+    check_rate_limit(request.client.host if request.client else "unknown")
     if not file.filename.endswith(".csv"):
         raise HTTPException(status_code=400, detail="Only CSV files are supported.")
-    
+
     content = await file.read()
+    if len(content) > MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail=f"File too large (max {MAX_UPLOAD_BYTES // (1024*1024)} MB).")
     try:
         text = content.decode("utf-8-sig")
     except UnicodeDecodeError:
@@ -275,11 +312,10 @@ async def process_pipeline(file: UploadFile = File(...)):
         product_objs.append(p)
         results.append(p.to_dict())
     
-    files_dir = os.path.dirname(os.path.abspath(__file__))
     timestamp = int(time.time())
     export_filename = f"export_{timestamp}.csv"
-    export_path = os.path.join(files_dir, export_filename)
-    
+    export_path = os.path.join(EXPORTS_DIR, export_filename)
+
     write_csv(product_objs, rows, HEADERS, export_path)
     
     return {
@@ -291,12 +327,15 @@ async def process_pipeline(file: UploadFile = File(...)):
 
 
 @app.post("/pipeline/jobs")
-async def create_job(file: UploadFile = File(...)):
+async def create_job(request: Request, file: UploadFile = File(...)):
     """Create a background job for large datasets. Returns job_id for polling."""
+    check_rate_limit(request.client.host if request.client else "unknown")
     if not file.filename.endswith(".csv"):
         raise HTTPException(status_code=400, detail="Only CSV files are supported.")
-    
+
     content = await file.read()
+    if len(content) > MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail=f"File too large (max {MAX_UPLOAD_BYTES // (1024*1024)} MB).")
     try:
         text = content.decode("utf-8-sig")
     except UnicodeDecodeError:
@@ -441,12 +480,13 @@ async def debug_tracker():
     }
 
 
-# Mount static files (API routes first, then static fallback)
+# Mount static files (API routes first, then static fallback).
+# /files only ever serves generated exports (EXPORTS_DIR) — never the
+# source tree, caches, or logs that used to live alongside it.
 frontend_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "frontend")
-files_dir = os.path.dirname(os.path.abspath(__file__))
 
 app.mount("/frontend", StaticFiles(directory=frontend_dir, html=True), name="frontend")
-app.mount("/files", StaticFiles(directory=files_dir), name="files")
+app.mount("/files", StaticFiles(directory=EXPORTS_DIR), name="files")
 
 if __name__ == "__main__":
     import uvicorn

@@ -547,6 +547,7 @@ function renderDetail(index) {
                         ${a.evidence && a.evidence.length && a.evidence[0].source_url && a.evidence[0].source_url !== 'web_fetch' && !a.evidence[0].source_url.startsWith('part_desc') ? `<a href="${esc(a.evidence[0].source_url)}" target="_blank" class="btn btn-ghost btn-sm" style="font-size:0.75rem;padding:0.125rem 0.375rem;text-decoration:none" onclick="event.stopPropagation()">&#128279; View Source</a>` : ''}
                         ${a.evidence && a.evidence.length ? `<span style="font-size:0.75rem;color:var(--gray-400)">${esc(sourceName(a.evidence[0].source_url))}</span>` : ''}
                     </div>
+                    ${a.reason ? `<div class="attr-reason" style="font-size:0.75rem;color:var(--gray-500);margin-top:0.375rem;padding-top:0.375rem;border-top:1px solid var(--gray-100);line-height:1.4">${esc(a.reason)}</div>` : ''}
                 </div>
             `).join('')}
         </div>

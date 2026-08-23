@@ -17,6 +17,7 @@ from web_evidence_provider import WebEvidenceProvider
 from gt_seed_provider import GroundTruthSeedProvider
 from desc_extraction_provider import DescriptionExtractionProvider
 from gemini_evidence_provider import GeminiEvidenceProvider
+from agentic_provider import AgenticEvidenceProvider
 from html_spec_extractor import SpecBlockExtractor
 from activity_tracker import tracker
 import os
@@ -42,8 +43,11 @@ class CompositeProvider(EvidenceProvider):
     def __init__(self, enable_web=True):
         self.gt_seed = GroundTruthSeedProvider()
         self.desc_extractor = DescriptionExtractionProvider()
-        # 3. Web Scraper (primary real-time source)
+        # 3. Web Scraper (primary real-time source — curated manufacturer domains)
         self.web = WebEvidenceProvider() if enable_web else None
+        # 3b. Agentic web search (DDGS + adaptive scraper) — covers brands with
+        # no curated domain mapping, by actually searching the live web.
+        self.agentic = AgenticEvidenceProvider() if enable_web else None
         # 4. PDF Scraper (real spec sheet extraction)
         self.pdf = PDFEvidenceProvider()
         # 5. Gemini LLM (fills gaps from web/PDF)
@@ -53,7 +57,23 @@ class CompositeProvider(EvidenceProvider):
         self._current_row: dict = {}
 
     def fetch_with_row(self, mfg_part_num: str, row: dict) -> dict:
-        """Full fetch with row context for description extraction."""
+        """Full fetch with row context for description extraction.
+
+        Records a real, per-provider trail (what was checked and what it
+        found) on every returned bundle as "_evidence_trail", so a missing
+        attribute can be explained honestly — "here is exactly what we
+        checked and why none of it had this field" — instead of a bare
+        "unknown" label.
+        """
+        trail = []
+
+        def record(provider, result, detail):
+            trail.append({"provider": provider, "result": result, "detail": detail})
+
+        def finalize(bundle):
+            bundle["_evidence_trail"] = list(trail)
+            return bundle
+
         # 1. GT seed — Tier-5 verified data (simulates production verified DB)
         tracker.emit(
             mpn=mfg_part_num, step="evidence_retrieval", provider="GroundTruthSeedProvider",
@@ -63,12 +83,14 @@ class CompositeProvider(EvidenceProvider):
         primary = self.gt_seed.fetch(mfg_part_num)
         if primary:
             n_facts = len(primary.get("facts", {}))
+            record("GroundTruthSeedProvider", "found", f"{n_facts} attributes from Unilog's verified GT database")
             tracker.emit(
                 mpn=mfg_part_num, step="evidence_retrieval", provider="GroundTruthSeedProvider",
                 action="found", detail=f"GT match found — {n_facts} attributes from verified database",
                 icon="done", status="success",
             )
-            return primary
+            return finalize(primary)
+        record("GroundTruthSeedProvider", "miss", "MPN not present in the verified GT database")
         tracker.emit(
             mpn=mfg_part_num, step="evidence_retrieval", provider="GroundTruthSeedProvider",
             action="miss", detail=f"No GT match for {mfg_part_num} — trying web...",
@@ -82,9 +104,10 @@ class CompositeProvider(EvidenceProvider):
                 action="searching", detail=f"Searching manufacturer sites for {mfg_part_num}...",
                 icon="search", status="running",
             )
-            web_result = self.web.fetch(mfg_part_num)
+            web_result = self.web.fetch_with_row(mfg_part_num, row)
             if web_result:
                 n_facts = len(web_result.get("facts", {}))
+                record("WebEvidenceProvider", "found", f"{n_facts} attributes from {web_result.get('_mfr_url', 'manufacturer page')}")
                 tracker.emit(
                     mpn=mfg_part_num, step="evidence_retrieval", provider="WebEvidenceProvider",
                     action="found", detail=f"Web evidence: {n_facts} attributes from {web_result.get('_mfr_url', 'manufacturer page')}",
@@ -93,16 +116,52 @@ class CompositeProvider(EvidenceProvider):
                 # Merge with desc extraction for extra fields
                 desc_result = self.desc_extractor.fetch_from_row(row)
                 if desc_result:
+                    record("DescriptionExtractionProvider", "found", f"{len(desc_result.get('facts', {}))} attributes from Part_Desc (merged with web evidence)")
                     merged = dict(desc_result)
                     merged.update(web_result)
                     merged_facts = dict(desc_result.get("facts", {}))
                     merged_facts.update(web_result.get("facts", {}))
                     merged["facts"] = merged_facts
-                    return merged
-                return web_result
+                    return finalize(merged)
+                return finalize(web_result)
+            record("WebEvidenceProvider", "miss", "No curated manufacturer domain matched this brand, or its product page did not mention this MPN")
             tracker.emit(
                 mpn=mfg_part_num, step="evidence_retrieval", provider="WebEvidenceProvider",
-                action="miss", detail=f"No web evidence found for {mfg_part_num} — trying PDF...",
+                action="miss", detail=f"No web evidence found for {mfg_part_num} — trying live search...",
+                icon="arrow", status="skip",
+            )
+
+        # 2b. Agentic web search — real DDGS search + adaptive scraper, for
+        # brands with no curated manufacturer-domain mapping.
+        if self.agentic:
+            tracker.emit(
+                mpn=mfg_part_num, step="evidence_retrieval", provider="AgenticEvidenceProvider",
+                action="searching", detail=f"Searching the live web for {mfg_part_num}...",
+                icon="search", status="running",
+            )
+            agentic_result = self.agentic.fetch(mfg_part_num)
+            if agentic_result:
+                n_facts = len(agentic_result.get("facts", {}))
+                record("AgenticEvidenceProvider", "found", f"{n_facts} attributes from live search result at {agentic_result.get('source_url', 'web')}")
+                tracker.emit(
+                    mpn=mfg_part_num, step="evidence_retrieval", provider="AgenticEvidenceProvider",
+                    action="found", detail=f"Live search evidence: {n_facts} attributes from {agentic_result.get('source_url', 'web')}",
+                    icon="done", status="success",
+                )
+                desc_result = self.desc_extractor.fetch_from_row(row)
+                if desc_result:
+                    record("DescriptionExtractionProvider", "found", f"{len(desc_result.get('facts', {}))} attributes from Part_Desc (merged with live search)")
+                    merged = dict(desc_result)
+                    merged.update(agentic_result)
+                    merged_facts = dict(desc_result.get("facts", {}))
+                    merged_facts.update(agentic_result.get("facts", {}))
+                    merged["facts"] = merged_facts
+                    return finalize(merged)
+                return finalize(agentic_result)
+            record("AgenticEvidenceProvider", "miss", "Live web search returned no manufacturer-hosted page with usable spec data (marketplace/distributor results are excluded)")
+            tracker.emit(
+                mpn=mfg_part_num, step="evidence_retrieval", provider="AgenticEvidenceProvider",
+                action="miss", detail=f"No live search evidence for {mfg_part_num} — trying PDF...",
                 icon="arrow", status="skip",
             )
 
@@ -115,12 +174,14 @@ class CompositeProvider(EvidenceProvider):
         pdf_result = self.pdf.fetch(mfg_part_num)
         if pdf_result:
             n_facts = len(pdf_result.get("facts", {}))
+            record("PDFEvidenceProvider", "found", f"{n_facts} attributes from a manufacturer PDF spec sheet")
             tracker.emit(
                 mpn=mfg_part_num, step="evidence_retrieval", provider="PDFEvidenceProvider",
                 action="found", detail=f"PDF evidence: {n_facts} attributes extracted",
                 icon="done", status="success",
             )
-            return pdf_result
+            return finalize(pdf_result)
+        record("PDFEvidenceProvider", "miss", "No PDF spec sheet found at any known manufacturer URL pattern for this MPN")
         tracker.emit(
             mpn=mfg_part_num, step="evidence_retrieval", provider="PDFEvidenceProvider",
             action="miss", detail=f"No PDF found for {mfg_part_num} — trying Gemini...",
@@ -136,12 +197,15 @@ class CompositeProvider(EvidenceProvider):
         gemini_result = self.gemini.fetch_with_row(mfg_part_num, row)
         if gemini_result:
             n_facts = len(gemini_result.get("facts", {}))
+            record("GeminiEvidenceProvider", "found", f"{n_facts} attributes from Gemini's model knowledge of this MPN")
             tracker.emit(
                 mpn=mfg_part_num, step="evidence_retrieval", provider="GeminiEvidenceProvider",
                 action="found", detail=f"Gemini evidence: {n_facts} attributes extracted",
                 icon="done", status="success",
             )
-            return gemini_result
+            return finalize(gemini_result)
+        gemini_note = "Gemini had no reliable knowledge of this specific model" if self.gemini._enabled else "Gemini is not configured (no API key)"
+        record("GeminiEvidenceProvider", "miss", gemini_note)
         tracker.emit(
             mpn=mfg_part_num, step="evidence_retrieval", provider="GeminiEvidenceProvider",
             action="miss", detail=f"Gemini extraction empty for {mfg_part_num} — falling back to description",
@@ -157,12 +221,15 @@ class CompositeProvider(EvidenceProvider):
         desc_result = self.desc_extractor.fetch_from_row(row)
         if desc_result:
             n_facts = len(desc_result.get("facts", {}))
+            record("DescriptionExtractionProvider", "found", f"{n_facts} attributes parsed directly from Part_Desc text")
             tracker.emit(
                 mpn=mfg_part_num, step="evidence_retrieval", provider="DescriptionExtractionProvider",
                 action="done", detail=f"Description extraction: {n_facts} attributes from Part_Desc",
                 icon="done", status="success",
             )
-        return desc_result
+            return finalize(desc_result)
+        record("DescriptionExtractionProvider", "miss", "No recognizable attribute patterns in Part_Desc text")
+        return finalize(desc_result or {})
 
     def fetch(self, mfg_part_num: str) -> dict:
         """Backwards-compatible fetch — uses cached row if available."""

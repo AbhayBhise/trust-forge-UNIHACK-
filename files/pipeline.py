@@ -91,13 +91,39 @@ def build_product(row: dict, provider: EvidenceProvider) -> Product:
         evidence_bundle = {}
         evidence_found = False
 
+    # The input row itself can be a real source of truth: Part_Manuf is
+    # often the actual manufacturer name (not always a distributor), and
+    # it's real, given data — not a guess. Strip a trailing distributor
+    # account code like "(6603)" that sometimes rides along with it.
+    raw_part_manuf = re.sub(r"\s*\([^)]*\)\s*$", "", row.get("Part_Manuf", "") or "").strip()
+    has_real_input_mfr = bool(raw_part_manuf) and raw_part_manuf not in PLACEHOLDER_BRANDS
+
     product.identity = resolve_identity(row, evidence_found)
     if evidence_found:
-        product.manufacturer_name = evidence_bundle.get("_manufacturer_name", "")
-        product.brand_name = evidence_bundle.get("_brand_name", "")
+        ev_mfr = evidence_bundle.get("_manufacturer_name", "") or ""
+        ev_brand = evidence_bundle.get("_brand_name", "") or ""
+        # Gemini's brand/manufacturer is model knowledge, not a verified
+        # lookup — it can hallucinate a plausible-sounding but wrong brand
+        # (e.g. calling a Southwire cable "LG"). Never let that override a
+        # real, specific manufacturer name we were already given.
+        is_llm_guess = str(evidence_bundle.get("_mfr_url", "")).startswith("gemini://")
+        if is_llm_guess and has_real_input_mfr:
+            product.manufacturer_name = raw_part_manuf
+            # Only keep the LLM's brand suggestion if it's at least
+            # consistent with the manufacturer we already trust.
+            if ev_brand and (ev_brand.upper() in raw_part_manuf.upper() or raw_part_manuf.upper() in ev_brand.upper()):
+                product.brand_name = ev_brand
+        else:
+            # A real page/PDF/GT hit didn't name a manufacturer (e.g. we
+            # don't have that brand in KNOWN_BRANDS yet) — don't blank out
+            # a real value we already had from the input row.
+            product.manufacturer_name = ev_mfr or (raw_part_manuf if has_real_input_mfr else "")
+            product.brand_name = ev_brand
         product.with_phrase = evidence_bundle.get("_with_phrase", "")
         product.approvals = evidence_bundle.get("_approvals", "")
-    
+    elif has_real_input_mfr:
+        product.manufacturer_name = raw_part_manuf
+
     # Override manufacturer/brand from MPN prefix mapping when distributor name detected
     mpn_upper = mpn.upper()
     for prefix, (brand, mfr) in MPN_MANUFACTURER_MAP.items():
@@ -143,18 +169,37 @@ def build_product(row: dict, provider: EvidenceProvider) -> Product:
         product._cfg = config_appliances
     else:
         product._cfg = config_generic
+    product._category = product._cfg.__name__.split('.')[-1].replace('config_', '')
+
+    # For the generic bucket, don't ask every product about every domain's
+    # attributes (a sanding belt has no Wire Gauge or Wood Species). Route
+    # to only the attributes structurally relevant to this description.
+    if product._cfg is config_generic:
+        product._attr_schema = config_generic.get_attributes_for_desc(row.get("Part_Desc", ""))
+    else:
+        product._attr_schema = product._cfg.ATTRIBUTES
 
     tracker.emit(
         mpn=mpn, step="category_detection", provider="Pipeline",
-        action="done", detail=f"Config: {product._cfg.__name__.split('.')[-1]} — Category: {category}",
+        action="done", detail=f"Config: {product._cfg.__name__.split('.')[-1]} — Category: {category} — {len(product._attr_schema)} relevant attributes",
         icon="done", status="success",
     )
 
     facts = evidence_bundle.get("facts", {}) if evidence_found else {}
 
+    # Build a human-readable account of what was actually checked for this
+    # product, so a missing value can say exactly why instead of just
+    # "unknown" — the user has a right to the real reason, not a status badge.
+    trail = evidence_bundle.get("_evidence_trail", [])
+    if trail:
+        trail_summary = "; ".join(f"{t['provider']} — {t['detail']}" for t in trail)
+    else:
+        trail_summary = "no evidence provider returned a bundle for this MPN"
+    missing_reason = f"Not found: {trail_summary}."
+
     # ── Step 2a: Category-specific attributes (dishwasher config) ────
     existing_labels = set()
-    for label, dtype, uom_expected, required in product._cfg.ATTRIBUTES:
+    for label, dtype, uom_expected, required in product._attr_schema:
         attr = Attribute(attribute=label, required=required)
         if label == "Series" and evidence_found:
             attr.value = evidence_bundle.get("_series")
@@ -166,6 +211,8 @@ def build_product(row: dict, provider: EvidenceProvider) -> Product:
                     source_tier=evidence_bundle.get("source_tier", 0)
                 ))
                 attr.confidence = 100.0 if evidence_bundle.get("source_tier") == 5 else 80.0
+            if not attr.value:
+                attr.reason = f"Series not present in any evidence source's data. {missing_reason}"
         elif label in facts:
             value, uom, ev = facts[label]
             attr.value = value
@@ -180,6 +227,7 @@ def build_product(row: dict, provider: EvidenceProvider) -> Product:
                 attr.confidence = 60.0
         else:
             attr.status = "needs_review" if required else "unknown"
+            attr.reason = f"'{label}' not present in Part_Desc or any evidence source. {missing_reason}"
         product.attributes.append(attr)
         existing_labels.add(label)
 
@@ -227,9 +275,9 @@ def build_product(row: dict, provider: EvidenceProvider) -> Product:
     )
     for attr in product.attributes:
         label = attr.attribute
-        dtype = next((t for l, t, _, _ in product._cfg.ATTRIBUTES if l == label), "text")
-        uom_expected = next((u for l, _, u, _ in product._cfg.ATTRIBUTES if l == label), None)
-        required = next((r for l, _, _, r in product._cfg.ATTRIBUTES if l == label), False)
+        dtype = next((t for l, t, _, _ in product._attr_schema if l == label), "text")
+        uom_expected = next((u for l, _, u, _ in product._attr_schema if l == label), None)
+        required = next((r for l, _, _, r in product._attr_schema if l == label), False)
         _validate_attribute(attr, product, dtype, uom_expected)
     tracker.emit(
         mpn=mpn, step="validation", provider="Pipeline",
@@ -447,9 +495,17 @@ def _score_confidence(attr: Attribute, product: Product):
         attr.status = "verified"
     elif score >= product._cfg.NEEDS_REVIEW_THRESHOLD:
         attr.status = "needs_review"
+        attr.reason = f"Value found ({attr.value!r}) but confidence scored only {score:.0%} — flagged for human review rather than auto-approved."
     else:
+        # Withhold low-confidence guesses per spec Section 6 — but say so,
+        # rather than silently discarding a value we did find.
+        attr.reason = (
+            f"A candidate value ({attr.value!r}) was found but confidence scored only "
+            f"{score:.0%}, below the {product._cfg.NEEDS_REVIEW_THRESHOLD:.0%} minimum — "
+            f"withheld rather than reported as fact."
+        )
         attr.status = "unknown"
-        attr.value = None  # withhold low-confidence guesses per spec Section 6
+        attr.value = None
 
 
 def _fmt(v):

@@ -52,6 +52,7 @@ class Attribute:
     validation_report: list[ValidationEntry] = field(default_factory=list)
     history: list[HistoryEntry] = field(default_factory=list)
     required: bool = False
+    reason: str = ""  # why this value is missing/unverified — which sources were checked and what they found
 
     def to_dict(self) -> dict:
         return {
@@ -64,13 +65,14 @@ class Attribute:
             "checks": self.checks,
             "validation_report": [vars(v) for v in self.validation_report],
             "history": [vars(h) for h in self.history],
+            "reason": self.reason,
         }
 
 
 @dataclass
 class Product:
     mfg_part_num: str
-    part_desc: str
+    part_desc: str = ""
     identity: Identity = field(default_factory=lambda: Identity(status="unverified"))
     manufacturer_name: Optional[str] = None
     brand_name: Optional[str] = None

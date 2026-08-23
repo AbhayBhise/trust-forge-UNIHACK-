@@ -82,17 +82,17 @@ Manufacturer: {manufacturer}
 {web_context}
 
 IMPORTANT CONTEXT:
-- This MPN is from a distributor catalog. The actual manufacturer may differ from the Part_Manuf field.
+- If "Manufacturer" above is a real, specific company name (not blank, not a generic distributor/reseller account), treat it as the authoritative manufacturer for this product. Do not replace it with a different, better-known brand unless the description explicitly contradicts it.
+- Do not default to a large, well-known consumer brand (Frigidaire, Whirlpool, LG, Samsung, etc.) out of habit. This dataset spans many industries — abrasives, plumbing, electrical, lumber, hardware, tools — and most products are made by specialized industrial manufacturers, not consumer-electronics companies. Only name a specific brand/manufacturer if you have real, specific knowledge that it made this exact model, or the input data already tells you.
 - "SS" in descriptions means "Stainless Steel"
-- MPN prefixes often encode the brand: PD/FD = Frigidaire, WD/WT = Whirlpool, LG = LG, etc.
-- For dishwashers, common attributes include: wash cycles (3-8), voltage (120V typical), amperage (10-15A), mounting (Built-in/Leg/Freestanding), sound level (38-55 dBA)
+- For dishwashers specifically, common attributes include: wash cycles (3-8), voltage (120V typical), amperage (10-15A), mounting (Built-in/Leg/Freestanding), sound level (38-55 dBA) — this does not apply to other product types.
 
 {attribute_schema}
 
 Return ONLY a valid JSON object with this exact structure:
 {{
-  "brand": "actual brand name (e.g. FRIGIDAIRE, Whirlpool, LG)",
-  "manufacturer": "full manufacturer company name (e.g. Whirlpool Corporation, Electrolux Home Products)",
+  "brand": "actual brand name if genuinely known, otherwise null — never a guessed placeholder",
+  "manufacturer": "full manufacturer company name if genuinely known, otherwise null",
   "classpath": "category path (e.g. Appliances > Kitchen Appliances > Built-In Dishwashers)",
   "attributes": {{
     "Series": "product line or null",
@@ -118,9 +118,8 @@ Return ONLY a valid JSON object with this exact structure:
 }}
 
 Rules:
-- Use your training knowledge about these specific product models
-- For Frigidaire PDSH4816AF: It's a Professional Series dishwasher with CleanBoost, 5 wash cycles, 120V, 15A, Leg mounting, 24 in width, 47 dBA, Stainless Steel
-- For Whirlpool WDTS7024RZ: It's an Eco Series dishwasher with Built-in mounting, 120V, 10A, 41 dBA, Stainless Steel
+- Use your training knowledge about real, publicly documented specifications for this exact MPN/model
+- If you do not have reliable knowledge of this specific model, leave the field null — do not guess or invent a plausible-sounding value
 - Only include attributes you are confident about
 - Return ONLY the JSON, no other text
 """
@@ -145,6 +144,12 @@ class GeminiEvidenceProvider(EvidenceProvider):
         self._client = None
         self._enabled = bool(_API_KEY)
         self._cache = {}
+        # Circuit breaker: once the key's quota is clearly exhausted (a 429
+        # response), stop spending a retry-with-backoff on every single row.
+        # At 1000 rows, retrying a quota that resets on a per-minute/per-day
+        # window (not per-request) just burns wall-clock time for nothing.
+        self._circuit_open_until = 0.0
+        self._circuit_cooldown_seconds = 30.0
         if self._enabled:
             try:
                 from google import genai
@@ -187,6 +192,10 @@ class GeminiEvidenceProvider(EvidenceProvider):
             log.info(f"Gemini cache hit for {mfg_part_num}")
             return self._cache[mfg_part_num]
 
+        if time.time() < self._circuit_open_until:
+            log.info(f"Gemini circuit open (quota exhausted) — skipping {mfg_part_num} without a network call")
+            return {}
+
         mpn = row.get("Mfg_Part_Num", "")
         desc = row.get("Part_Desc", "")
         manufacturer = row.get("Part_Manuf", "")
@@ -205,9 +214,12 @@ class GeminiEvidenceProvider(EvidenceProvider):
             attribute_schema=ATTRIBUTE_SCHEMA,
         )
 
-        # Retry logic with exponential backoff
-        max_retries = 3
-        for attempt in range(max_retries):
+        # One attempt, one short retry for a genuinely transient failure. A
+        # 429 usually means a per-minute/per-day quota, not a per-request
+        # blip — a local retry-with-backoff can't fix that, so instead we
+        # trip the circuit breaker above and let every subsequent row skip
+        # straight past Gemini until the cooldown expires.
+        for attempt in range(2):
             try:
                 response = self._client.models.generate_content(
                     model=MODEL,
@@ -239,16 +251,18 @@ class GeminiEvidenceProvider(EvidenceProvider):
                 return {}
             except Exception as e:
                 error_str = str(e)
-                if "503" in error_str or "UNAVAILABLE" in error_str or "429" in error_str:
-                    wait_time = (2 ** attempt) * 2  # 2, 4, 8 seconds
-                    log.warning(f"Gemini rate limited for {mpn}, retry {attempt+1}/{max_retries} in {wait_time}s")
-                    time.sleep(wait_time)
-                    continue
-                else:
-                    log.warning(f"Gemini extraction failed for {mpn}: {e}")
+                if "429" in error_str or "RESOURCE_EXHAUSTED" in error_str:
+                    self._circuit_open_until = time.time() + self._circuit_cooldown_seconds
+                    log.warning(f"Gemini quota exhausted (429) — opening circuit for {self._circuit_cooldown_seconds}s")
                     return {}
+                if "503" in error_str or "UNAVAILABLE" in error_str:
+                    if attempt == 0:
+                        time.sleep(1.5)
+                        continue
+                    return {}
+                log.warning(f"Gemini extraction failed for {mpn}: {e}")
+                return {}
 
-        log.warning(f"Gemini exhausted retries for {mpn}")
         return {}
 
     def _build_evidence_bundle(self, data: dict, mpn: str, desc: str) -> dict:

@@ -25,17 +25,11 @@ from urllib.parse import quote_plus
 import requests
 from bs4 import BeautifulSoup
 
-try:
-    from patchright.sync_api import sync_playwright
-    _PATCHRIGHT_AVAILABLE = True
-except ImportError:
-    _PATCHRIGHT_AVAILABLE = False
-    sync_playwright = None
-
 from evidence_provider import EvidenceProvider
 from html_spec_extractor import SpecBlockExtractor
 from models import Evidence
 from activity_tracker import tracker
+from agentic_provider import AdaptiveScraperAgent
 
 log = logging.getLogger(__name__)
 
@@ -53,7 +47,7 @@ HEADERS = {
     "Accept-Language": "en-US,en;q=0.9",
 }
 TIMEOUT = 4
-MAX_TIME_PER_MPN = 25.0  # seconds — increased to allow fetch_html to auto-click search results
+MAX_TIME_PER_MPN = 12.0  # seconds — now only tries 2 targeted URLs (no more blind 28-site guessing)
 DELAY_BETWEEN_REQUESTS = 0.2  # seconds — reduced from 0.3s
 
 # ── Manufacturer search URLs ─────────────────────────────
@@ -336,6 +330,19 @@ KNOWN_BRANDS = {
     "leviton": ("Leviton", "Leviton Manufacturing"),
     "lutron": ("Lutron", "Lutron Electronics"),
     "3m": ("3M", "3M Company"),
+    "southwire": ("Southwire", "Southwire Company"),
+    # Abrasives / cutting brands
+    "diablo": ("Diablo", "Freud Inc"),
+    "freud": ("Freud", "Freud Inc"),
+    "mirka": ("Mirka", "Mirka Abrasives Inc"),
+    "norton": ("Norton", "Saint-Gobain Abrasives"),
+    # Decking / lumber brands
+    "trex": ("Trex", "Trex Company"),
+    "azek": ("Azek", "AZEK Building Products"),
+    "timbertech": ("TimberTech", "AZEK Building Products"),
+    # Hardware / fasteners
+    "national nail": ("National Nail", "National Nail Corp"),
+    "matco-norca": ("Matco-Norca", "Matco-Norca Inc"),
 }
 
 
@@ -355,7 +362,7 @@ class WebEvidenceProvider(EvidenceProvider):
 
     def __init__(self):
         self.spec_extractor = SpecBlockExtractor()
-        # session is removed, using patchright
+        self.scraper = AdaptiveScraperAgent()
         self._cache = {}  # mpn -> evidence bundle (in-memory)
         self._last_request_time = 0.0
         self._load_cache()
@@ -387,15 +394,36 @@ class WebEvidenceProvider(EvidenceProvider):
 
     def fetch_with_row(self, mfg_part_num: str, row: dict) -> dict:
         brand = row.get("MANUFACTURER_NAME", row.get("Part_Manuf", ""))
-        return self._fetch_internal(mfg_part_num, brand)
+        desc = row.get("Part_Desc", "")
+        return self._fetch_internal(mfg_part_num, brand, desc)
 
     def fetch(self, mfg_part_num: str) -> dict:
-        return self._fetch_internal(mfg_part_num, "")
+        return self._fetch_internal(mfg_part_num, "", "")
 
-    def _fetch_internal(self, mfg_part_num: str, brand: str) -> dict:
+    def _resolve_brand_domain(self, brand: str, desc: str) -> Optional[tuple[str, str]]:
+        """Find a known manufacturer domain from an explicit brand field or,
+        failing that, from a brand keyword actually present in the product
+        description. Never guesses — returns None if there's no real signal,
+        so callers don't fall back to blindly trying unrelated manufacturer
+        sites (which produces false positives when a site's own "no results
+        for '<query>'" text happens to contain the MPN)."""
+        brand_lower = brand.lower() if brand else ""
+        brand_lower = re.sub(r'\s*\([^)]*\)', '', brand_lower).strip()
+        if brand_lower in BRAND_DOMAINS:
+            return brand_lower, BRAND_DOMAINS[brand_lower]
+
+        desc_lower = (desc or "").lower()
+        if desc_lower:
+            # Longest keys first so e.g. "bosch tools" wins over "bosch".
+            for key in sorted(BRAND_DOMAINS.keys(), key=len, reverse=True):
+                if re.search(r'\b' + re.escape(key) + r'\b', desc_lower):
+                    return key, BRAND_DOMAINS[key]
+        return None
+
+    def _fetch_internal(self, mfg_part_num: str, brand: str, desc: str = "") -> dict:
         """
         Fetch real product evidence for an MPN from the web.
-        
+
         Returns evidence bundle dict, or empty dict if nothing found.
         Enforces MAX_TIME_PER_MPN to prevent hanging on slow sites.
         """
@@ -410,29 +438,28 @@ class WebEvidenceProvider(EvidenceProvider):
         mpn = mfg_part_num.strip().upper()
         log.info(f"Web evidence fetch for MPN: {mpn} (Brand: {brand})")
         start_time = time.time()
-        
+
+        resolved = self._resolve_brand_domain(brand, desc)
         urls_to_try = []
-        brand_lower = brand.lower() if brand else ""
-        brand_lower = re.sub(r'\s*\([^)]*\)', '', brand_lower).strip()
-        
-        if not urls_to_try:
-            if brand_lower in BRAND_DOMAINS:
-                domain = BRAND_DOMAINS[brand_lower]
-                urls_to_try.append((f"{brand}_search", f"https://www.{domain}/search?q={quote_plus(mpn)}"))
-                urls_to_try.append((f"{brand}_search_alt", f"https://www.{domain}/products/{quote_plus(mpn)}"))
-                tracker.emit(
-                    mpn=mfg_part_num, step="web_fetch", provider="WebEvidenceProvider",
-                    action="targeted", detail=f"Brand '{brand}' mapped to {domain} — trying direct URLs",
-                    icon="search", status="running",
-                )
-            else:
-                for src_name, url_template in SEARCH_SOURCES:
-                    urls_to_try.append((src_name, url_template.format(mpn=quote_plus(mpn))))
-                tracker.emit(
-                    mpn=mfg_part_num, step="web_fetch", provider="WebEvidenceProvider",
-                    action="broad_search", detail=f"Unknown brand — scanning {len(urls_to_try)} manufacturer sites",
-                    icon="search", status="running",
-                )
+        if resolved:
+            matched_key, domain = resolved
+            urls_to_try.append((f"{matched_key}_search", f"https://www.{domain}/search?q={quote_plus(mpn)}"))
+            urls_to_try.append((f"{matched_key}_search_alt", f"https://www.{domain}/products/{quote_plus(mpn)}"))
+            tracker.emit(
+                mpn=mfg_part_num, step="web_fetch", provider="WebEvidenceProvider",
+                action="targeted", detail=f"Brand '{matched_key}' resolved to {domain} — trying direct URLs",
+                icon="search", status="running",
+            )
+        else:
+            # No real signal for which manufacturer this is — don't blindly
+            # guess across unrelated sites. Let AgenticEvidenceProvider's real
+            # web search handle it instead.
+            tracker.emit(
+                mpn=mfg_part_num, step="web_fetch", provider="WebEvidenceProvider",
+                action="skip", detail=f"No known brand/domain signal for {mfg_part_num} — deferring to live search",
+                icon="arrow", status="skip",
+            )
+            return {}
 
         # Try each search source until we find a product page
         for source_name, search_url in urls_to_try:
@@ -453,17 +480,7 @@ class WebEvidenceProvider(EvidenceProvider):
                     action="fetching", detail=f"Fetching {search_url[:80]}...",
                     icon="fetch", status="running",
                 )
-                # Fetch from our persistent Playwright server to avoid massive process spawning overhead
-                import requests
-                params = {"url": search_url, "mpn": mpn}
-                resp = requests.get("http://127.0.0.1:8001/fetch", params=params, timeout=30)
-                if resp.status_code == 200:
-                    data = resp.json()
-                    html = data.get("html", "")
-                    real_url = data.get("final_url", search_url)
-                else:
-                    html = ""
-                    real_url = search_url
+                html, real_url = self.scraper.fetch_with_url(search_url, mpn)
                     
                 is_search_url = "search" in search_url.lower() or "query" in search_url.lower() or "?q=" in search_url.lower()
                 if is_search_url and real_url == search_url:
@@ -484,7 +501,24 @@ class WebEvidenceProvider(EvidenceProvider):
                     log.debug(f"  {source_name}: page too small ({len(html)} bytes)")
                     continue
 
-                if mpn.lower() not in html.lower():
+                html_lower = html.lower()
+                no_results_markers = (
+                    "no results", "0 results", "no matches", "did not match",
+                    "we couldn't find", "we could not find", "no products found",
+                )
+                # An MPN can appear in an unhelpful page purely because the site
+                # echoes the raw query back (e.g. "No results found for '<mpn>'").
+                # Guard against treating that as a real product match.
+                if any(marker in html_lower for marker in no_results_markers):
+                    tracker.emit(
+                        mpn=mfg_part_num, step="web_fetch", provider="WebEvidenceProvider",
+                        action="skip", detail=f"{source_name}: page reports no results — not a real product match",
+                        icon="arrow", status="skip",
+                    )
+                    log.debug(f"  {source_name}: no-results page, rejecting")
+                    continue
+
+                if mpn.lower() not in html_lower:
                     tracker.emit(
                         mpn=mfg_part_num, step="web_fetch", provider="WebEvidenceProvider",
                         action="skip", detail=f"{source_name}: MPN not found in page content",
@@ -663,23 +697,58 @@ class WebEvidenceProvider(EvidenceProvider):
         return ATTR_MAP.get(lower)
 
     def _infer_brand(self, html: str, source_name: str) -> tuple[Optional[str], Optional[str]]:
-        """Infer brand and manufacturer from page HTML."""
-        html_lower = html.lower()
-        
-        for keyword, (brand, mfr) in KNOWN_BRANDS.items():
-            if keyword in html_lower:
-                return brand, mfr
-        
-        # Fallback: try to find brand in common meta tags
+        """Infer brand and manufacturer from page HTML.
+
+        Short brand keys like "lg", "ge", "3m" are a real trap: word-boundary
+        matching alone isn't enough, because Bootstrap CSS class names are
+        hyphen-separated ("col-lg-6", "d-lg-none") and a hyphen counts as a
+        word boundary — "lg" inside "col-lg-6" matches \\blg\\b even though
+        it has nothing to do with the brand LG. A real Southwire cable page
+        false-positived as "LG Electronics" this way. Two defenses: scan
+        visible text (not raw markup, so CSS/class noise is gone), and never
+        let a key this short/ambiguous be decided by a generic body scan —
+        only trust it if the page's own title says so.
+        """
+        keys_by_specificity = sorted(KNOWN_BRANDS.keys(), key=len, reverse=True)
+
+        def find_in(text: str, min_key_len: int = 0) -> Optional[tuple]:
+            text_lower = text.lower()
+            for keyword in keys_by_specificity:
+                if len(keyword) < min_key_len:
+                    continue
+                if re.search(r'\b' + re.escape(keyword) + r'\b', text_lower):
+                    return KNOWN_BRANDS[keyword]
+            return None
+
+        # High precision: the page's own title/og:title/h1 almost always
+        # names the actual brand — safe to trust even short keys here.
         soup = BeautifulSoup(html, "html.parser")
+        for title_text in self._page_title_candidates(soup):
+            match = find_in(title_text)
+            if match:
+                return match
+
+        # Lower precision fallback: visible text only (never raw HTML/CSS),
+        # and require a longer, less ambiguous key (skip 2-letter codes like
+        # "lg"/"ge" here — too easy to false-positive even in real prose).
+        visible_text = soup.get_text(separator=" ", strip=True)
+        match = find_in(visible_text, min_key_len=3)
+        if match:
+            return match
+
+        return None, None
+
+    def _page_title_candidates(self, soup) -> list[str]:
+        candidates = []
         og_title = soup.find("meta", property="og:title")
         if og_title and og_title.get("content"):
-            title = og_title["content"]
-            for keyword, (brand, mfr) in KNOWN_BRANDS.items():
-                if keyword in title.lower():
-                    return brand, mfr
-        
-        return None, None
+            candidates.append(og_title["content"])
+        if soup.title and soup.title.string:
+            candidates.append(soup.title.string)
+        h1 = soup.find("h1")
+        if h1:
+            candidates.append(h1.get_text(strip=True))
+        return candidates
 
     def _extract_series(self, text: str) -> Optional[str]:
         """Try to extract product series from text."""

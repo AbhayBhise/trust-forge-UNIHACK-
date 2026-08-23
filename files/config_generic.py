@@ -6,32 +6,45 @@ Provides 30+ attributes so non-appliance products get rich extraction.
 
 CLASSPATH = ""
 
-# Generic attributes that apply to most product types
-# Organized by domain so any product gets reasonable coverage
-ATTRIBUTES = [
+# Attributes that apply to virtually any physical product, regardless of
+# sub-category — always included.
+BASE_ATTRIBUTES = [
     # (label, type, uom, required)
-    # ── Identity ──
     ("Series", "text", None, False),
     ("Model", "text", None, False),
-    # ── Dimensions ──
     ("Size", "text", "in", False),
-    ("Length", "number", "in", False),
-    ("Width", "number", "in", False),
-    ("Height", "number", "in", False),
     ("Weight", "number", "lb", False),
-    # ── Material / Finish ──
     ("Material", "enum", None, False),
     ("Color", "enum", None, False),
-    ("Finish", "text", None, False),
-    # ── Abrasives / Sanding ──
+    ("Quantity", "number", None, False),
+    ("Additional Information", "text", None, False),
+    ("Warranty", "text", None, False),
+    ("EAN/UPC", "text", None, False),
+    ("Marketing Description", "text", None, False),
+    ("Item Features", "text", None, False),
+]
+
+ABRASIVES_ATTRIBUTES = [
     ("Abrasive Grade", "text", None, False),
     ("Grit", "text", None, False),
     ("Diameter", "number", "in", False),
     ("Thickness", "number", "in", False),
     ("Arbor Size", "text", "in", False),
     ("Max RPM", "number", "rpm", False),
+    ("Length", "number", "in", False),
+    ("Width", "number", "in", False),
     ("Pack Quantity", "number", None, False),
-    # ── Plumbing / Fittings ──
+]
+
+TOOLS_ATTRIBUTES = [
+    ("Diameter", "number", "in", False),
+    ("Thickness", "number", "in", False),
+    ("Arbor Size", "text", "in", False),
+    ("Max RPM", "number", "rpm", False),
+    ("Edge Type", "text", None, False),
+]
+
+PLUMBING_ATTRIBUTES = [
     ("Fitting Type", "text", None, False),
     ("Connection Type", "text", None, False),
     ("Pipe Size", "text", "in", False),
@@ -39,34 +52,99 @@ ATTRIBUTES = [
     ("Maximum Pressure", "number", "psi", False),
     ("Number of Handles", "integer", None, False),
     ("Faucet Type", "text", None, False),
-    # ── Electrical ──
+]
+
+ELECTRICAL_ATTRIBUTES = [
     ("Voltage Rating", "number", "V", False),
     ("Amperage Rating", "number", "A", False),
     ("Wattage", "number", "W", False),
     ("Wire Gauge", "text", None, False),
     ("Number of Conductors", "integer", None, False),
-    # ── Mounting / Install ──
-    ("Mounting Type", "enum", None, False),
-    ("Edge Type", "text", None, False),
-    # ── Lumber / Decking ──
+]
+
+LUMBER_ATTRIBUTES = [
     ("Nominal Size", "text", None, False),
     ("Actual Size", "text", None, False),
     ("Wood Species", "text", None, False),
     ("Grade", "text", None, False),
     ("Treatment", "text", None, False),
     ("Profile", "text", None, False),
-    # ── Hardware / Fasteners ──
+    ("Length", "number", "in", False),
+]
+
+HARDWARE_ATTRIBUTES = [
     ("Thread Size", "text", None, False),
     ("Head Type", "text", None, False),
     ("Drive Type", "text", None, False),
-    ("Quantity", "number", None, False),
-    # ── General ──
-    ("Additional Information", "text", None, False),
-    ("Warranty", "text", None, False),
-    ("EAN/UPC", "text", None, False),
-    ("Marketing Description", "text", None, False),
-    ("Item Features", "text", None, False),
+    ("Length", "number", "in", False),
 ]
+
+GENERAL_ATTRIBUTES = [
+    ("Mounting Type", "enum", None, False),
+    ("Finish", "text", None, False),
+    ("Height", "number", "in", False),
+    ("Width", "number", "in", False),
+]
+
+# Keyword -> attribute set. Checked in order; a description can match more
+# than one (e.g. a tool bit is both Tools and Hardware-ish) so sets are
+# unioned by label, not exclusive.
+_SUBCATEGORY_KEYWORDS = [
+    (ABRASIVES_ATTRIBUTES, (
+        "sand", "abrasive", "grit", "disc", "belt", "cubitron", "stikit",
+        "hiolit", "abranet", "sanding",
+    )),
+    (TOOLS_ATTRIBUTES, (
+        "cut-off", "cutoff", "grinding wheel", "blade", "drill bit",
+        "router bit", "saw blade", "wheel", "bit ",
+    )),
+    (PLUMBING_ATTRIBUTES, (
+        "valve", "pipe", "coupling", "hose", "faucet", "nipple", "elbow", "tee",
+    )),
+    (ELECTRICAL_ATTRIBUTES, (
+        "wire", "cable", "conduit", "conductor", "awg", "electrical",
+    )),
+    (LUMBER_ATTRIBUTES, (
+        "decking", "deck board", "railing", "rail kit", "composite decking",
+        "lumber", "trex", "azek", "board",
+    )),
+    (HARDWARE_ATTRIBUTES, (
+        "screw", "bolt", "nail", "nut ", "washer", "anchor", "fastener",
+    )),
+]
+
+
+def get_attributes_for_desc(part_desc: str) -> list:
+    """Real, deterministic attribute-schema routing: only ask questions that
+    are structurally relevant to the detected product type. A sanding belt
+    has no Wire Gauge or Wood Species — showing those as "unknown" isn't
+    honest reporting, it's asking irrelevant questions. Matching on the
+    description text (not a fixed one-size-fits-all list) keeps every
+    attribute we DO ask about a real, answerable question for this product.
+    """
+    desc_lower = (part_desc or "").lower()
+    matched = []
+    for attrs, keywords in _SUBCATEGORY_KEYWORDS:
+        if any(kw in desc_lower for kw in keywords):
+            matched.append(attrs)
+
+    if not matched:
+        matched = [GENERAL_ATTRIBUTES]
+
+    seen_labels = set()
+    result = list(BASE_ATTRIBUTES)
+    seen_labels.update(label for label, *_ in result)
+    for attrs in matched:
+        for entry in attrs:
+            label = entry[0]
+            if label not in seen_labels:
+                result.append(entry)
+                seen_labels.add(label)
+    return result
+
+
+# Backwards-compatible default (used only if no description is available).
+ATTRIBUTES = BASE_ATTRIBUTES + GENERAL_ATTRIBUTES
 
 MOUNTING_TYPE_VALUES = set()
 

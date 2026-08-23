@@ -141,13 +141,19 @@ def map_to_delivery_format(product, original_row, headers):
             mapped[f"ATTRIBUTE_VALUE {i}"] = ""
             mapped[f"ATTRIBUTE_UOM {i}"] = ""
 
-    # ── Digital Asset filenames ────────────────────────────────────
-    brand_clean = _strip_marks(product.brand_name or "").replace(" ", "_").upper()
-    if brand_clean and product.mfg_part_num:
-        if not mapped.get("Product Image"):
-            mapped["Product Image"] = f"{brand_clean}_{product.mfg_part_num}.jpg"
-        if not mapped.get("Specification Sheet"):
-            mapped["Specification Sheet"] = f"{brand_clean}_{product.mfg_part_num}_Specification_Sheet.pdf"
+    # ── Digital Assets ───────────────────────────────────────────────
+    # Only populate from a URL an evidence provider actually found and
+    # traced — never invent a filename we haven't verified exists.
+    if not mapped.get("Specification Sheet"):
+        for attr in product.attributes:
+            for ev in attr.evidence:
+                if ev.page_or_section == "PDF spec sheet" and ev.source_url:
+                    mapped["Specification Sheet"] = ev.source_url
+                    break
+            if mapped.get("Specification Sheet"):
+                break
+    # No provider currently extracts a real product-image URL, so
+    # "Product Image" is left blank rather than guessed.
 
     return mapped
 
@@ -157,10 +163,25 @@ def _strip_marks(text: str) -> str:
     return re.sub(r"[®™\u00ae\u2122]", "", text).strip()
 
 
+_FORMULA_LEAD_CHARS = ("=", "+", "-", "@", "\t", "\r")
+
+
+def _neutralize_formula_injection(value):
+    """Values in this export ultimately trace back to scraped web pages and
+    LLM output — untrusted text. A cell starting with =, +, -, or @ opens as
+    a live formula in Excel/Sheets (CSV injection, a real OWASP-listed risk),
+    which could reach a judge's machine. Prefix with a single quote, the
+    standard neutralization, so it renders as literal text instead."""
+    if isinstance(value, str) and value and value[0] in _FORMULA_LEAD_CHARS:
+        return "'" + value
+    return value
+
+
 def write_csv(products, original_rows, headers, output_path):
     with open(output_path, "w", newline="", encoding="utf-8-sig") as f:
         writer = csv.DictWriter(f, fieldnames=headers)
         writer.writeheader()
         for product, row in zip(products, original_rows):
             mapped = map_to_delivery_format(product, row, headers)
+            mapped = {k: _neutralize_formula_injection(v) for k, v in mapped.items()}
             writer.writerow(mapped)

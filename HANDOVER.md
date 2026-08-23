@@ -1,7 +1,118 @@
 # TrustForge — Complete Project Handover
 
-> **Last updated:** 2026-08-21 | **Commit:** `e14e63f` | **Branch:** `main`
+> **Last updated:** 2026-08-23 | **Branch:** `main`
 > **Deadline:** 23rd August, 11:59 PM IST
+
+---
+
+## 0. 2026-08-23 SESSION — ANTI-MOCK AUDIT & REAL-DATA FIXES
+
+Everything below this section was written 2026-08-21 and describes the state
+*before* this session. Read this section first — it corrects several claims
+below that turned out not to hold up under real testing, and explains what
+actually changed today. **Do not trust the "84.8% GT accuracy" number as
+representative of judged performance** — see 0.3.
+
+### 0.1 Real violations found and fixed
+- **`gemini_evidence_provider.py` had the two GT MPNs' exact spec answers
+  hardcoded into the extraction prompt** (Section 6 below claims "MOCKS ARE
+  PERMANENTLY BANNED" — this was a live violation of that rule). Removed.
+- **`export_mapper.py` fabricated `Product Image`/`Specification Sheet`
+  filenames** (`{BRAND}_{MPN}.jpg`) with no evidence they exist. Now only
+  populated from a real, traced PDF URL when one was actually found.
+- **`WebEvidenceProvider` silently called `http://127.0.0.1:8001/fetch`** — a
+  Playwright proxy nothing in the codebase ever starts (not `server.py`, not
+  `render.yaml`). Every real web fetch was failing invisibly and falling
+  through to weaker evidence. `playwright_server.py` deleted; scraping is now
+  in-process via `agentic_provider.AdaptiveScraperAgent`.
+- **`agentic_provider.py` (DDGS search + Wayback + stealth scraping) was
+  fully built but never wired into `CompositeProvider`** — it's now the
+  live-search fallback tier in `eval.py`.
+- **False-positive identity bug**: blind-guessing across 28 unrelated
+  manufacturer domains let a "no results for '&lt;query&gt;'" page falsely
+  satisfy the "MPN found on page" check, reporting a 3M product as verified
+  LG data. Fixed via real brand-signal resolution (explicit field or
+  description keyword) + a no-results-page guard — no more blind guessing.
+- **`_infer_brand()` used naive substring matching** (`"lg" in html.lower()`)
+  — Bootstrap CSS classes like `col-lg-6`/`d-lg-none` are everywhere on real
+  websites, so short brand keys ("lg", "ge", "3m") false-positived constantly.
+  A real Southwire cable page got misattributed to "LG Electronics" this way.
+  Fixed: word-boundary matching, visible-text-only scan (not raw markup),
+  and short/ambiguous keys are only trusted from the page's own title.
+- **Gemini brand hallucination overriding real input data**: the pipeline
+  blindly let any evidence bundle's guessed manufacturer overwrite
+  `Part_Manuf` from the input row, even when Gemini invented an unrelated
+  well-known brand. Now a real, non-placeholder `Part_Manuf` value wins over
+  an unverified LLM guess.
+- **`server.py` timeout mismatch**: `TIMEOUT_SECONDS = 8.0` predated any real
+  network calls. Once scraping actually worked, every row legitimately took
+  35–90s and would have been marked "failed" by the 8s timeout. Raised to
+  60s; each provider now also self-limits (`MAX_TIME_PER_MPN` / circuit
+  breakers) so the worst case stays bounded.
+- Two dataclass crash bugs fixed (`Product()` called without required
+  fields in exception-handling fallback paths — Section 5, bug #2 below).
+- `config_generic.py`'s single flat 46-attribute list (spanning abrasives +
+  plumbing + electrical + lumber + hardware, applied to every non-appliance
+  product regardless of relevance) was split into a small base set plus
+  per-subcategory sets, routed by keywords in the product's own description.
+  A sanding belt no longer gets asked about Wire Gauge or Wood Species.
+- Every `Attribute` now carries a `reason` field — a real per-provider trail
+  (`CompositeProvider._evidence_trail`) of what was checked and what each
+  source found/missed, surfaced on the Product Detail UI. "Unknown" no
+  longer means "no explanation," it means "here's exactly what we checked."
+
+### 0.2 Security/resilience hardening added
+- `/files` static mount used to serve the **entire `files/` directory** —
+  source code, `web_evidence_cache.json`, `gemini_cache.json`, `server.log`
+  — publicly. Now scoped to a dedicated `files/exports/` directory that only
+  ever contains generated CSVs.
+- CSV/Excel formula-injection neutralization on export (`export_mapper.py`)
+  — a cell value starting with `=`/`+`/`-`/`@` (possible via scraped/LLM
+  text) is prefixed to render as literal text, not a live formula.
+- SSRF guard in `agentic_provider.py` — refuses to fetch any URL that isn't
+  plain http(s) to a public host (blocks localhost, private ranges, link-
+  local/cloud-metadata addresses) before making a request to a
+  search-result-supplied URL.
+- Basic per-IP rate limiting (10 req/60s) and a 25MB upload cap on the
+  processing endpoints.
+- Marketplace/distributor domain exclusion list in `agentic_provider.py` —
+  the solution guide explicitly forbids sourcing from marketplaces/
+  distributors; a raw web search for an MPN routinely surfaces exactly
+  those, so results are filtered before ever being fetched.
+
+### 0.3 On the "84.8% GT accuracy" number
+This number **did not change at all** after removing the hardcoded Gemini
+answers, which was surprising until traced: `validate_ground_truth.py` (and
+`eval.py:run()`, Section 5 bug #1) only ever test the 2 MPNs that are
+*already in* the official GT CSV, and `GroundTruthSeedProvider` intercepts
+those 2 MPNs first, before Web/Agentic/PDF/Gemini/Description ever run —
+it just reads the answer back out of the same file that defines the
+"ground truth." **The judges' evaluation dataset will not contain these 2
+MPNs**, so this metric measures nothing about real extraction capability.
+Real-world behavior looks like the diverse smoke tests in this session
+(abrasives/electrical/hardware/lumber rows never seen in GT) — correct
+identity resolution most of the time post-fixes, partial attribute coverage
+depending on whether a real manufacturer page/PDF/LLM knowledge exists for
+that specific MPN, and honest `needs_review`/`unknown` with a stated reason
+otherwise. If you want a real accuracy number to cite, measure against
+non-GT rows with manually-verified spot checks — not this script.
+
+### 0.4 Known remaining gaps (not fixed this session, be aware of these)
+- Controlled vocabulary compliance: the solution guide requires brand names
+  and attribute values to come from Unilog's ~27,000-row approved brand list
+  and ~161,000-row LOV file. Those files were never provided to us — our
+  `config_generic.py` LOV sets are a best-effort approximation, not the real
+  list. Don't claim full LOV compliance in the demo.
+- Full-batch throughput: with real scraping/LLM calls, ~1000 rows at 20
+  workers realistically takes tens of minutes, not seconds. The background
+  job + polling UI handles this, but budget real wait time before a live demo.
+- Gemini quota: the configured key was rate-limited on nearly every call
+  during testing. A circuit breaker now stops wasting time retrying against
+  it, but that also means Gemini contributes less when quota is exhausted —
+  check quota/billing before relying on it in the demo.
+- `eval.py:run()` still has the circular-evaluation bug described in Section
+  5, bug #1 — it wasn't touched this session since it's a dev script, not
+  the production path (`server.py`), but don't cite its output either.
 
 ---
 
